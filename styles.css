@@ -159,6 +159,49 @@ button.danger { color: white; background: var(--danger); }
   text-anchor: middle;
 }
 
+.map-legend-box {
+  fill: #ffffff;
+  stroke: #1e293b;
+  stroke-width: 2;
+  filter: drop-shadow(0 8px 10px rgba(2, 6, 23, .18));
+}
+.map-legend-title {
+  fill: #0f172a;
+  font-size: 17px;
+  font-weight: 950;
+  text-anchor: middle;
+}
+.map-legend-road {
+  stroke: #ef4444;
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+.map-legend-text {
+  fill: #111827;
+  font-size: 20px;
+  font-weight: 900;
+}
+.map-legend-note {
+  fill: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+.map-legend-bridge-outline {
+  fill: #111827;
+  stroke: #111827;
+  stroke-width: 7;
+  stroke-linejoin: round;
+  opacity: .32;
+}
+.map-legend-bridge {
+  fill: #ef4444;
+  stroke: #111827;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  opacity: .95;
+}
+
 .dice-panel-bg {
   fill: #eff6ff;
   stroke: #93c5fd;

@@ -209,6 +209,23 @@ function renderMerchantOverlay(nodes, currentMerchant) {
   svg.appendChild(svgText(label, { x: 115, y: 306, class: 'merchant-route-text' }));
 }
 
+
+function renderBuildLegend() {
+  const x = 10;
+  const y = 344;
+  svg.appendChild(el('rect', { x, y, width: 210, height: 150, rx: 14, class: 'map-legend-box' }));
+  svg.appendChild(svgText('\u9053\u8def / \u6865\u6881\u56fe\u4f8b', { x: x + 105, y: y + 28, class: 'map-legend-title' }));
+
+  svg.appendChild(el('line', { x1: x + 28, y1: y + 60, x2: x + 98, y2: y + 60, class: 'map-legend-road' }));
+  svg.appendChild(svgText('\u9053\u8def', { x: x + 122, y: y + 66, class: 'map-legend-text' }));
+
+  const bridgePoints = `${x + 63},${y + 84} ${x + 35},${y + 126} ${x + 91},${y + 126}`;
+  svg.appendChild(el('polygon', { points: bridgePoints, class: 'map-legend-bridge-outline' }));
+  svg.appendChild(el('polygon', { points: bridgePoints, class: 'map-legend-bridge' }));
+  svg.appendChild(svgText('\u6865\u6881', { x: x + 122, y: y + 113, class: 'map-legend-text' }));
+  svg.appendChild(svgText('\u4fee\u8def\u540e\u9053\u8def\u76d6\u5728\u6865\u4e0a', { x: x + 105, y: y + 141, class: 'map-legend-note' }));
+}
+
 function renderDiceDisplay(state) {
   const nonce = state.diceAnimationNonce || 0;
   const g = el('g', { class: 'dice-panel', 'data-nonce': nonce, transform: 'translate(790 190)' });
@@ -257,12 +274,7 @@ function renderBoard() {
     svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'path-edge' }));
   }
 
-  // Draw roads first, then draw bridges on top as short centered segments.
-  for (const e of Object.values(edges)) {
-    const a = point(nodes[e.nodeA]);
-    const b = point(nodes[e.nodeB]);
-    if (e.roadOwnerId) svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'road-edge', stroke: players[e.roadOwnerId].color }));
-  }
+  // Draw bridges before roads: bridges are built first and should visually sit below roads.
   for (const e of Object.values(edges)) {
     const a = point(nodes[e.nodeA]);
     const b = point(nodes[e.nodeB]);
@@ -272,8 +284,14 @@ function renderBoard() {
       svg.appendChild(el('polygon', { points, class: 'bridge-triangle', fill: players[e.bridgeOwnerId].color }));
     }
   }
+  for (const e of Object.values(edges)) {
+    const a = point(nodes[e.nodeA]);
+    const b = point(nodes[e.nodeB]);
+    if (e.roadOwnerId) svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'road-edge', stroke: players[e.roadOwnerId].color }));
+  }
 
   renderMerchantOverlay(nodes, currentMerchant);
+  renderBuildLegend();
 
   for (const e of Object.values(edges)) {
     const a = point(nodes[e.nodeA]);
