@@ -18,16 +18,18 @@
   <main class="layout">
     <section class="board-panel">
       <div id="setupPanel" class="card setup-card">
-        <h2>创建游戏</h2>
-        <label>玩家数量
+        <h2>城乡基建</h2>
+        <p class="setup-intro">请选择本地多人轮流模式。每局都会自动生成新的地图与随机流程。</p>
+        <h3 class="setup-subtitle">本地多人轮流游玩</h3>
+        <label>玩家人数
           <select id="playerCountInput">
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
+            <option value="2">2 人</option>
+            <option value="3">3 人</option>
+            <option value="4">4 人</option>
           </select>
         </label>
         <div id="playerNameInputs"></div>
-        <button id="createGameBtn" class="primary">开始游戏</button>
+        <button id="createGameBtn" class="primary setup-start">开始本地新游戏</button>
       </div>
 
       <div class="card board-card">
