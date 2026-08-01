@@ -359,6 +359,15 @@ export class GameEngine {
     return this.adjacentEdges(baseNodeId).filter(e => this.canBuildRoad(playerId, e));
   }
 
+  getBuildableSecondDieTargets(playerId, baseNodeId, die2) {
+    return neighborsOf(baseNodeId).filter(id => {
+      const node = this.getNode(id);
+      if (!node || node.diceNumber !== die2) return false;
+      const edge = this.getEdge(edgeId(baseNodeId, id));
+      return this.canBuildRoad(playerId, edge) || this.canBuildBridge(playerId, edge);
+    });
+  }
+
   getBuildableBaseNodesForDie1(playerId) {
     return this.selectableBasesForDie1()
       .filter(id => this.getBuildableRoadEdgesFromBase(playerId, id).length > 0);
@@ -380,8 +389,7 @@ export class GameEngine {
     if (!base || base.diceNumber !== this.state.lastDie1) throw new Error('基地点数必须等于第一骰');
     this.state.lastDie2 = this.random.rollDie();
     this.state.diceAnimationNonce = (this.state.diceAnimationNonce || 0) + 1;
-    const candidates = neighborsOf(baseNodeId)
-      .filter(id => this.state.nodes[id]?.diceNumber === this.state.lastDie2);
+    const candidates = this.getBuildableSecondDieTargets(this.currentPlayerId, baseNodeId, this.state.lastDie2);
     this.log('DICE_ROLLED', `${this.state.players[this.currentPlayerId].name} 选择基地 ${baseNodeId}，掷出第二骰：${this.state.lastDie2}`, { baseNodeId, die: this.state.lastDie2, candidates });
     return { die2: this.state.lastDie2, candidates };
   }
@@ -390,10 +398,12 @@ export class GameEngine {
     const playerId = this.currentPlayerId;
     if (this.state.lastDie2 === null) throw new Error('请先掷第二骰');
     const target = this.getNode(targetNodeId);
-    if (!target || target.diceNumber !== this.state.lastDie2 || !neighborsOf(baseNodeId).includes(targetNodeId)) {
-      throw new Error('目标必须是与基地相邻且点数等于第二骰的居民点');
-    }
     const id = edgeId(baseNodeId, targetNodeId);
+    const allowedTargets = this.getBuildableSecondDieTargets(playerId, baseNodeId, this.state.lastDie2);
+    if (!target || target.diceNumber !== this.state.lastDie2 || !neighborsOf(baseNodeId).includes(targetNodeId) || !allowedTargets.includes(targetNodeId)) {
+      this.log('NO_EFFECT', '第二骰目标点或边不符合修路/修桥条件，行动无效果', { edgeId: id });
+      return 'NONE';
+    }
     const edge = this.getEdge(id);
     if (edge.isRiverCrossing && this.canBuildBridge(playerId, edge)) {
       this.buildBridge(playerId, id);

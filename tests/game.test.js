@@ -57,6 +57,30 @@ function testBuildableBasesForDie1() {
   console.log('✓ 行动2可修路基地过滤测试通过');
 }
 
+function testSecondDieFiltersOccupiedTargets() {
+  const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'second-die-filter' });
+  const baseId = 'r4c5';
+  const targetId = 'r5c5';
+  const edge = game.state.edges[edgeId(baseId, targetId)];
+  assert.ok(edge, 'test edge should exist');
+  for (const node of Object.values(game.state.nodes)) node.diceNumber = 2;
+  game.state.nodes[baseId].diceNumber = 5;
+  game.state.nodes[targetId].diceNumber = 6;
+  edge.roadOwnerId = 'P2';
+  edge.bridgeOwnerId = null;
+  edge.isRiverCrossing = false;
+  game.state.phase = 'PLAYER_TURN';
+  game.state.currentPlayerIndex = 0;
+  game.state.lastDie1 = 5;
+  game.state.lastDie2 = 6;
+
+  assert.deepEqual(game.getBuildableSecondDieTargets('P1', baseId, 6), [], 'occupied second-die target should not be selectable');
+  const res = game.resolveSecondDieBuild(baseId, targetId);
+  assert.equal(res, 'NONE', 'occupied second-die target should be invalid');
+  assert.equal(edge.roadOwnerId, 'P2', 'existing road must not be swallowed or overwritten');
+  console.log('second die occupied edge filter test passed');
+}
+
 
 function testSubsidyAndMerchantTypes() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'subsidy-merchant' });
@@ -114,6 +138,7 @@ function testUniformShortestPathDP() {
 testMapGeneration();
 testBuildRules();
 testBuildableBasesForDie1();
+testSecondDieFiltersOccupiedTargets();
 testSubsidyAndMerchantTypes();
 testUniformShortestPathDP();
 console.log('全部测试通过');
