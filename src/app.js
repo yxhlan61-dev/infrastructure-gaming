@@ -79,6 +79,15 @@ function svgText(text, attrs = {}) {
   t.textContent = text;
   return t;
 }
+function svgMultilineText(lines, attrs = {}, lineHeight = 18) {
+  const t = el('text', attrs);
+  lines.forEach((line, index) => {
+    const span = el('tspan', { x: attrs.x, dy: index === 0 ? 0 : lineHeight });
+    span.textContent = line;
+    t.appendChild(span);
+  });
+  return t;
+}
 function htmlEscape(str) {
   return String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 }
@@ -194,6 +203,15 @@ function selectableNodes() {
   return new Set();
 }
 
+function routeLabel(startNodeId, endNodeId) {
+  return `${coordLabel(startNodeId)} \u2192 ${coordLabel(endNodeId)}`;
+}
+
+function merchantTollInfo(merchant) {
+  const multiplier = merchant?.type === 'BIG' ? 2 : 1;
+  return { roadFee: multiplier, bridgeFee: 4 * multiplier };
+}
+
 function renderMerchantOverlay(nodes, currentMerchant) {
   if (!currentMerchant) return;
   const startNode = nodes[currentMerchant.startNodeId];
@@ -203,16 +221,91 @@ function renderMerchantOverlay(nodes, currentMerchant) {
   const b = point(endNode);
   svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'merchant-direct-line' }));
 
-  const label = `${coordLabel(currentMerchant.startNodeId)} → ${coordLabel(currentMerchant.endNodeId)}`;
-  svg.appendChild(el('rect', { x: 10, y: 250, width: 210, height: 74, rx: 14, class: 'merchant-route-box' }));
-  svg.appendChild(svgText('当前商人路线', { x: 115, y: 276, class: 'merchant-route-title' }));
-  svg.appendChild(svgText(label, { x: 115, y: 306, class: 'merchant-route-text' }));
+  const merchantType = currentMerchant.type === 'BIG' ? '\u5927\u5546\u4eba' : '\u5c0f\u5546\u4eba';
+  const { roadFee, bridgeFee } = merchantTollInfo(currentMerchant);
+
+  svg.appendChild(el('rect', { x: 10, y: 92, width: 222, height: 114, rx: 14, class: 'merchant-info-box' }));
+  svg.appendChild(svgMultilineText([
+    `${merchantType}\u4f1a\u6cbf\u7740\u6700\u77ed\u8def\u5f84\u8fdb\u884c\u4ea4\u6613`,
+    `\u9053\u8def\u8fc7\u8def\u8d39 ${roadFee}$ / \u6bb5`,
+    `\u6865\u6881\u8fc7\u8def\u8d39 ${bridgeFee}$ / \u5ea7`,
+    '\u8bf7\u5c3d\u53ef\u80fd\u591a\u7684\u5b8c\u5584\u57ce\u4e61\u57fa\u5efa\u5427',
+  ], { x: 121, y: 122, class: 'merchant-info-text' }, 23));
+
+  svg.appendChild(el('rect', { x: 10, y: 222, width: 222, height: 68, rx: 14, class: 'merchant-route-box' }));
+  svg.appendChild(svgText('\u5f53\u524d\u5546\u4eba\u8def\u7ebf', { x: 121, y: 247, class: 'merchant-route-title' }));
+  svg.appendChild(svgText(routeLabel(currentMerchant.startNodeId, currentMerchant.endNodeId), { x: 121, y: 275, class: 'merchant-route-text' }));
+
+  svg.appendChild(el('rect', { x: 10, y: 304, width: 222, height: 58, rx: 14, class: 'final-route-box' }));
+  svg.appendChild(svgText('\u6700\u540e\u4e00\u4e2a\u5927\u5546\u4eba\u56fa\u5b9a\u8def\u7ebf', { x: 121, y: 327, class: 'final-route-title' }));
+  svg.appendChild(svgText(routeLabel('r6c6', 'r1c1'), { x: 121, y: 351, class: 'final-route-text' }));
 }
 
+function drawRegionBackground(nodes) {
+  const cell = POS.step;
+  for (const n of Object.values(nodes)) {
+    const p = point(n);
+    svg.appendChild(el('rect', {
+      x: p.x - cell / 2,
+      y: p.y - cell / 2,
+      width: cell,
+      height: cell,
+      class: `region-bg ${n.region === 'CITY' ? 'region-bg-city' : 'region-bg-country'}`,
+    }));
+  }
+}
+
+function catmullRomPath(points) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function riverCurvePoints(nodes, edges) {
+  const points = Object.values(edges)
+    .filter(e => e.isRiverCrossing)
+    .map(e => {
+      const a = point(nodes[e.nodeA]);
+      const b = point(nodes[e.nodeB]);
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    })
+    .sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x || a.y - b.y);
+
+  if (points.length > 1) {
+    const first = points[0];
+    const second = points[1];
+    const before = { x: first.x - (second.x - first.x) * 0.75, y: first.y - (second.y - first.y) * 0.75 };
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const after = { x: last.x + (last.x - prev.x) * 0.75, y: last.y + (last.y - prev.y) * 0.75 };
+    return [before, ...points, after];
+  }
+  return points;
+}
+
+function drawRiverCurve(nodes, edges) {
+  const points = riverCurvePoints(nodes, edges);
+  if (points.length < 2) return;
+  const d = catmullRomPath(points);
+  svg.appendChild(el('path', { d, class: 'river-curve-bank' }));
+  svg.appendChild(el('path', { d, class: 'river-curve' }));
+}
 
 function renderBuildLegend() {
   const x = 10;
-  const y = 344;
+  const y = 380;
   svg.appendChild(el('rect', { x, y, width: 210, height: 150, rx: 14, class: 'map-legend-box' }));
   svg.appendChild(svgText('\u9053\u8def / \u6865\u6881\u56fe\u4f8b', { x: x + 105, y: y + 28, class: 'map-legend-title' }));
 
@@ -256,16 +349,14 @@ function renderBoard() {
   const nodeSet = selectableNodes();
   const pathSet = new Set(lastMerchantPath || []);
 
-  for (const e of Object.values(edges)) {
-    const a = point(nodes[e.nodeA]);
-    const b = point(nodes[e.nodeB]);
-    if (e.isRiverCrossing) svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'river-edge' }));
-  }
+  drawRegionBackground(nodes);
+
   for (const e of Object.values(edges)) {
     const a = point(nodes[e.nodeA]);
     const b = point(nodes[e.nodeB]);
     svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'edge-base' }));
   }
+  drawRiverCurve(nodes, edges);
   for (const id of pathSet) {
     const e = edges[id];
     if (!e) continue;
@@ -563,9 +654,14 @@ function processDrawCardAndMaybeFinish() {
 
 function finishTurn() {
   clearPendingWait();
+  const previousMerchantIndex = engine.state.currentMerchant?.index;
   engine.finishActionAndAdvance();
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
   uiMode = { type: engine.state.phase === PHASE.GAME_END ? 'GAME_END' : 'IDLE' };
   render();
+  if (shouldAnnounceBigMerchant) {
+    showAnnouncement('\u5927\u5546\u4eba\u524d\u6765\u4ea4\u6613', '\u57ce\u4e61\u57fa\u5efa\u8fdb\u5165\u51b2\u523a\u9636\u6bb5');
+  }
 }
 
 render();
