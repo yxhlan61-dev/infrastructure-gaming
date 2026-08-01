@@ -28,8 +28,8 @@ let pendingWaitSeq = 0;
 const POS = { xMargin: 250, yMargin: 60, step: 100 };
 const LEFT_PANEL = { x: -115, width: 230 };
 function point(node) {
-  // The design document defines row as top-to-bottom and col as left-to-right.
-  return { x: POS.xMargin + (node.col - 1) * POS.step, y: POS.yMargin + (node.row - 1) * POS.step };
+  // The visual map uses the first quadrant: col is x (rightward), row is y (upward).
+  return { x: POS.xMargin + (node.col - 1) * POS.step, y: POS.yMargin + (6 - node.row) * POS.step };
 }
 function mapBounds() {
   return {
@@ -76,7 +76,7 @@ function bridgeTrianglePoints(a, b) {
 function coordLabel(nodeId) {
   if (!engine) return nodeId;
   const n = engine.state.nodes[nodeId];
-  return n ? `(${n.row},${n.col})` : nodeId;
+  return n ? `(${n.col},${n.row})` : nodeId;
 }
 function el(name, attrs = {}, children = []) {
   const node = document.createElementNS('http://www.w3.org/2000/svg', name);
@@ -259,7 +259,7 @@ function renderMerchantOverlay(nodes, currentMerchant) {
 function logicalToSvg(p) {
   return {
     x: POS.xMargin + (p.x - 1) * POS.step,
-    y: POS.yMargin + (p.y - 1) * POS.step,
+    y: POS.yMargin + (6 - p.y) * POS.step,
   };
 }
 
@@ -578,7 +578,7 @@ function renderBoard() {
     circle.addEventListener('click', () => onNodeClick(n.id));
     svg.appendChild(circle);
     svg.appendChild(svgText(n.diceNumber, { x: p.x, y: p.y + 1, class: 'node-label' }));
-    svg.appendChild(svgText(`(${n.row},${n.col}) ${regionName(n.region)}`, { x: p.x, y: p.y + 35, class: 'node-coord' }));
+    svg.appendChild(svgText(`(${n.col},${n.row}) ${regionName(n.region)}`, { x: p.x, y: p.y + 35, class: 'node-coord' }));
   }
   renderDiceDisplay(engine.state);
 }

@@ -320,7 +320,7 @@ export class GameEngine {
 
   formatNodeCoord(nodeIdValue) {
     const node = this.getNode(nodeIdValue);
-    return node ? `(${node.row},${node.col})` : nodeIdValue;
+    return node ? `(${node.col},${node.row})` : nodeIdValue;
   }
 
   formatEdgeCoord(edgeOrId) {

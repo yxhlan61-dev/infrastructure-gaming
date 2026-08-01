@@ -90,6 +90,15 @@ function testSecondDieFiltersOccupiedTargets() {
 }
 
 
+function testFirstQuadrantCoordinateLabels() {
+  const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'coordinate-labels' });
+  assert.equal(game.formatNodeCoord('r1c1'), '(1,1)', '(1,1) should remain the lower-left first-quadrant coordinate');
+  assert.equal(game.formatNodeCoord('r1c6'), '(6,1)', 'internal row/col IDs must display as (x,y)');
+  assert.equal(game.formatNodeCoord('r6c1'), '(1,6)', 'y should increase upward in displayed coordinates');
+  assert.equal(game.formatNodeCoord('r6c6'), '(6,6)', '(6,6) should remain the upper-right first-quadrant coordinate');
+  console.log('first-quadrant coordinate label test passed');
+}
+
 function testSubsidyAndMerchantTypes() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'subsidy-merchant' });
   const playerId = game.currentPlayerId;
@@ -147,6 +156,7 @@ testMapGeneration();
 testBuildRules();
 testBuildableBasesForDie1();
 testSecondDieFiltersOccupiedTargets();
+testFirstQuadrantCoordinateLabels();
 testSubsidyAndMerchantTypes();
 testUniformShortestPathDP();
 console.log('全部测试通过');
