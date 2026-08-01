@@ -410,8 +410,9 @@ function perimeterPointsClockwise(from, to, b) {
 }
 
 function perimeterPointsCounterClockwise(from, to, b) {
-  const reverse = [from, ...perimeterPointsClockwise(to, from, b)].reverse();
-  return reverse.slice(1);
+  // Reverse the clockwise walk from `to` back to `from`. Keep `to` as the
+  // final closing point so the polygon reconnects to the river start.
+  return perimeterPointsClockwise(to, from, b).slice(0, -1).reverse().concat(to);
 }
 
 function pointInPolygon(target, polygon) {
