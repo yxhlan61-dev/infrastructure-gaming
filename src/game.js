@@ -579,7 +579,7 @@ export class GameEngine {
       const cityToCountry = this.random.next() < 0.5;
       merchant = {
         index,
-        type: 'SMALL',
+        type: index === 4 ? 'BIG' : 'SMALL',
         startNodeId: cityToCountry ? this.random.choice(city) : this.random.choice(country),
         endNodeId: cityToCountry ? this.random.choice(country) : this.random.choice(city),
         completed: false,

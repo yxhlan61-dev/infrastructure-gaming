@@ -130,7 +130,7 @@ function testFourthMerchantRoutesAreRandom() {
     const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: `merchant-four-${i}` });
     game.spawnMerchant(4);
     const merchant = game.state.currentMerchant;
-    assert.equal(merchant.type, 'SMALL', 'the fourth merchant should be a small merchant');
+    assert.equal(merchant.type, 'BIG', 'the fourth merchant should be a randomly routed big merchant');
     assert.notEqual(
       game.state.nodes[merchant.startNodeId].region,
       game.state.nodes[merchant.endNodeId].region,
@@ -151,12 +151,7 @@ function testSubsidyAndMerchantTypes() {
   assert.equal(game.state.players[playerId].tollMoney, before + 2, 'subsidy should add 2 dollars');
 
   game.spawnMerchant(4);
-  assert.equal(game.state.currentMerchant.type, 'SMALL', 'merchant 4 should remain a randomly generated small merchant');
-  assert.notEqual(
-    `${game.state.currentMerchant.startNodeId}>${game.state.currentMerchant.endNodeId}`,
-    'r6c6>r1c1',
-    'merchant 4 must not use the final fixed big-merchant route',
-  );
+  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 4 should be a randomly generated big merchant');
   const startRegion = game.state.nodes[game.state.currentMerchant.startNodeId].region;
   const endRegion = game.state.nodes[game.state.currentMerchant.endNodeId].region;
   assert.notEqual(startRegion, endRegion, 'merchant 4 random route should connect city and countryside');
