@@ -571,7 +571,7 @@ export class GameEngine {
 
   spawnMerchant(index) {
     let merchant;
-    if (index === 4 || index === 5) {
+    if (index === 5) {
       merchant = { index, type: 'BIG', startNodeId: 'r6c6', endNodeId: 'r1c1', completed: false };
     } else {
       const city = Object.values(this.state.nodes).filter(n => n.region === REGION.CITY).map(n => n.id);

@@ -124,6 +124,24 @@ function testMerchantLogCoordinates() {
   console.log('merchant log coordinate formatting test passed');
 }
 
+function testFourthMerchantRoutesAreRandom() {
+  const routes = new Set();
+  for (let i = 0; i < 60; i++) {
+    const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: `merchant-four-${i}` });
+    game.spawnMerchant(4);
+    const merchant = game.state.currentMerchant;
+    assert.equal(merchant.type, 'SMALL', 'the fourth merchant should be a small merchant');
+    assert.notEqual(
+      game.state.nodes[merchant.startNodeId].region,
+      game.state.nodes[merchant.endNodeId].region,
+      'the fourth merchant must still connect city and countryside',
+    );
+    routes.add(`${merchant.startNodeId}>${merchant.endNodeId}`);
+  }
+  assert.ok(routes.size >= 10, `fourth merchant routes should vary by random seed; got ${routes.size}`);
+  console.log('fourth merchant random route test passed');
+}
+
 function testSubsidyAndMerchantTypes() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'subsidy-merchant' });
   const playerId = game.currentPlayerId;
@@ -133,9 +151,20 @@ function testSubsidyAndMerchantTypes() {
   assert.equal(game.state.players[playerId].tollMoney, before + 2, 'subsidy should add 2 dollars');
 
   game.spawnMerchant(4);
-  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 4 should be big');
+  assert.equal(game.state.currentMerchant.type, 'SMALL', 'merchant 4 should remain a randomly generated small merchant');
+  assert.notEqual(
+    `${game.state.currentMerchant.startNodeId}>${game.state.currentMerchant.endNodeId}`,
+    'r6c6>r1c1',
+    'merchant 4 must not use the final fixed big-merchant route',
+  );
+  const startRegion = game.state.nodes[game.state.currentMerchant.startNodeId].region;
+  const endRegion = game.state.nodes[game.state.currentMerchant.endNodeId].region;
+  assert.notEqual(startRegion, endRegion, 'merchant 4 random route should connect city and countryside');
+
   game.spawnMerchant(5);
-  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 5 should be big');
+  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 5 should be the big merchant');
+  assert.equal(game.state.currentMerchant.startNodeId, 'r6c6', 'merchant 5 should use the fixed upper-right start');
+  assert.equal(game.state.currentMerchant.endNodeId, 'r1c1', 'merchant 5 should use the fixed lower-left end');
   console.log('subsidy and merchant type test passed');
 }
 
@@ -183,6 +212,7 @@ testBuildableBasesForDie1();
 testSecondDieFiltersOccupiedTargets();
 testFirstQuadrantCoordinateLabels();
 testMerchantLogCoordinates();
+testFourthMerchantRoutesAreRandom();
 testSubsidyAndMerchantTypes();
 testUniformShortestPathDP();
 console.log('全部测试通过');

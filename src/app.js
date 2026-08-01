@@ -989,7 +989,7 @@ function finishTurn() {
     ? engine.state.completedMerchants.at(-1)
     : null;
   const gameEnded = engine.state.phase === PHASE.GAME_END;
-  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 5 && previousMerchantIndex !== 5;
 
   if (completedMerchant) {
     startMerchantCompletionAnimation(completedMerchant, () => {
