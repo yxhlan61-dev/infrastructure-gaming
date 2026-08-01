@@ -1,5 +1,5 @@
 ﻿import assert from 'node:assert/strict';
-import { GameEngine, validateMap, edgeId } from '../src/game.js';
+import { GameEngine, validateMap, edgeId, CARD } from '../src/game.js';
 
 function testMapGeneration() {
   for (let i = 0; i < 100; i++) {
@@ -57,6 +57,22 @@ function testBuildableBasesForDie1() {
   console.log('✓ 行动2可修路基地过滤测试通过');
 }
 
+
+function testSubsidyAndMerchantTypes() {
+  const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'subsidy-merchant' });
+  const playerId = game.currentPlayerId;
+  const before = game.state.players[playerId].tollMoney;
+  const res = game.resolveCard(CARD.SUBSIDY);
+  assert.equal(res.done, true, 'subsidy should resolve immediately');
+  assert.equal(game.state.players[playerId].tollMoney, before + 2, 'subsidy should add 2 dollars');
+
+  game.spawnMerchant(4);
+  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 4 should be big');
+  game.spawnMerchant(5);
+  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 5 should be big');
+  console.log('subsidy and merchant type test passed');
+}
+
 function testUniformShortestPathDP() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'uniform-path' });
   const S = 'r1c1';
@@ -98,5 +114,6 @@ function testUniformShortestPathDP() {
 testMapGeneration();
 testBuildRules();
 testBuildableBasesForDie1();
+testSubsidyAndMerchantTypes();
 testUniformShortestPathDP();
 console.log('全部测试通过');

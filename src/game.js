@@ -421,8 +421,8 @@ export class GameEngine {
   resolveCard(card, options = {}) {
     const playerId = this.currentPlayerId;
     if (card === CARD.SUBSIDY) {
-      this.state.players[playerId].tollMoney += 1;
-      const announcement = `资金补贴卡：${this.state.players[playerId].name}获得 1$`;
+      this.state.players[playerId].tollMoney += 2;
+      const announcement = `资金补贴卡：${this.state.players[playerId].name}获得 2$`;
       this.log('CARD_RESOLVED', announcement, { card });
       return { done: true, announcement };
     }

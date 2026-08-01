@@ -281,7 +281,7 @@ function renderBoard() {
     if (e.bridgeOwnerId) {
       const points = bridgeTrianglePoints(a, b);
       svg.appendChild(el('polygon', { points, class: 'bridge-triangle-outline' }));
-      svg.appendChild(el('polygon', { points, class: 'bridge-triangle', fill: players[e.bridgeOwnerId].color }));
+      svg.appendChild(el('polygon', { points, class: 'bridge-triangle', fill: 'none', stroke: players[e.bridgeOwnerId].color }));
     }
   }
   for (const e of Object.values(edges)) {

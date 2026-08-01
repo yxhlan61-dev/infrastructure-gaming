@@ -188,18 +188,18 @@ button.danger { color: white; background: var(--danger); }
   text-anchor: middle;
 }
 .map-legend-bridge-outline {
-  fill: #111827;
+  fill: none;
   stroke: #111827;
-  stroke-width: 7;
+  stroke-width: 11;
   stroke-linejoin: round;
-  opacity: .32;
+  opacity: .24;
 }
 .map-legend-bridge {
-  fill: #ef4444;
-  stroke: #111827;
-  stroke-width: 3;
+  fill: none;
+  stroke: #ef4444;
+  stroke-width: 6;
   stroke-linejoin: round;
-  opacity: .95;
+  opacity: .98;
 }
 
 .dice-panel-bg {
@@ -296,17 +296,17 @@ button.danger { color: white; background: var(--danger); }
   opacity: .94;
 }
 .bridge-triangle-outline {
-  fill: #111827;
+  fill: none;
   stroke: #111827;
-  stroke-width: 7;
+  stroke-width: 11;
   stroke-linejoin: round;
-  opacity: .32;
+  opacity: .24;
 }
 .bridge-triangle {
-  stroke: #111827;
-  stroke-width: 3;
+  fill: none;
+  stroke-width: 6;
   stroke-linejoin: round;
-  opacity: .95;
+  opacity: .98;
   filter: drop-shadow(0 2px 2px rgba(15, 23, 42, .28));
 }
 .announcement-backdrop {
