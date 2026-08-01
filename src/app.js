@@ -351,19 +351,21 @@ function drawRiverCurve(nodes, edges) {
 }
 
 function renderBuildLegend() {
-  const x = 10;
+  const x = LEFT_PANEL.x;
   const y = 380;
-  svg.appendChild(el('rect', { x, y, width: 210, height: 150, rx: 14, class: 'map-legend-box' }));
-  svg.appendChild(svgText('\u9053\u8def / \u6865\u6881\u56fe\u4f8b', { x: x + 105, y: y + 28, class: 'map-legend-title' }));
+  const w = LEFT_PANEL.width;
+  const cx = x + w / 2;
+  svg.appendChild(el('rect', { x, y, width: w, height: 150, rx: 14, class: 'map-legend-box' }));
+  svg.appendChild(svgText('\u9053\u8def / \u6865\u6881\u56fe\u4f8b', { x: cx, y: y + 28, class: 'map-legend-title' }));
 
-  svg.appendChild(el('line', { x1: x + 28, y1: y + 60, x2: x + 98, y2: y + 60, class: 'map-legend-road' }));
-  svg.appendChild(svgText('\u9053\u8def', { x: x + 122, y: y + 66, class: 'map-legend-text' }));
+  svg.appendChild(el('line', { x1: x + 28, y1: y + 60, x2: x + 104, y2: y + 60, class: 'map-legend-road' }));
+  svg.appendChild(svgText('\u9053\u8def', { x: x + 132, y: y + 66, class: 'map-legend-text' }));
 
-  const bridgePoints = `${x + 63},${y + 84} ${x + 35},${y + 126} ${x + 91},${y + 126}`;
+  const bridgePoints = `${x + 66},${y + 84} ${x + 37},${y + 126} ${x + 95},${y + 126}`;
   svg.appendChild(el('polygon', { points: bridgePoints, class: 'map-legend-bridge-outline' }));
   svg.appendChild(el('polygon', { points: bridgePoints, class: 'map-legend-bridge' }));
-  svg.appendChild(svgText('\u6865\u6881', { x: x + 122, y: y + 113, class: 'map-legend-text' }));
-  svg.appendChild(svgText('\u4fee\u8def\u540e\u9053\u8def\u76d6\u5728\u6865\u4e0a', { x: x + 105, y: y + 141, class: 'map-legend-note' }));
+  svg.appendChild(svgText('\u6865\u6881', { x: x + 132, y: y + 113, class: 'map-legend-text' }));
+  svg.appendChild(svgText('\u4fee\u8def\u540e\u9053\u8def\u76d6\u5728\u6865\u4e0a', { x: cx, y: y + 141, class: 'map-legend-note' }));
 }
 
 function renderDiceDisplay(state) {
