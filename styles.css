@@ -607,3 +607,32 @@ body:not(.is-setup) .setup-card {
 .river-curve {
   stroke-width: 15;
 }
+
+/* Merchant trade animation and score dialogs. */
+.merchant-traveller {
+  pointer-events: none;
+}
+.merchant-traveller-halo {
+  fill: rgba(245, 158, 11, .24);
+  animation: merchantTravellerPulse 1s ease-in-out infinite;
+}
+.merchant-traveller-marker {
+  fill: #f59e0b;
+  stroke: #ffffff;
+  stroke-width: 4;
+  filter: drop-shadow(0 3px 4px rgba(146, 64, 14, .34));
+}
+.merchant-traveller-label {
+  fill: #ffffff;
+  font-size: 16px;
+  font-weight: 900;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.announcement-dialog p {
+  white-space: pre-line;
+}
+@keyframes merchantTravellerPulse {
+  0%, 100% { opacity: .48; transform: scale(.9); transform-origin: center; }
+  50% { opacity: .9; transform: scale(1.2); transform-origin: center; }
+}

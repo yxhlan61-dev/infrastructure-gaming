@@ -586,7 +586,7 @@ export class GameEngine {
       };
     }
     this.state.currentMerchant = merchant;
-    this.log('MERCHANT_SPAWNED', `${merchant.type === 'BIG' ? '大商人' : '小商人'} ${index} 登场：${merchant.startNodeId} → ${merchant.endNodeId}`, merchant);
+    this.log('MERCHANT_SPAWNED', `${merchantName(merchant)} \u767b\u573a\uff1a${this.formatNodeCoord(merchant.startNodeId)} \u2192 ${this.formatNodeCoord(merchant.endNodeId)}`, merchant);
   }
 
   passableEdges() {
@@ -693,7 +693,7 @@ export class GameEngine {
     merchant.chosenPathNodeIds = path.nodeIds;
     this.state.completedMerchants.push(merchant);
     this.state.lastMerchantPath = path.edgeIds;
-    this.log('MERCHANT_COMPLETED', `商人 ${merchant.index} 完成交易：${merchant.startNodeId} → ${merchant.endNodeId}，最短长度 ${path.length}，等概率候选路径 ${path.pathCount} 条`, { merchant, path, tollDetails });
+    this.log('MERCHANT_COMPLETED', `${merchantName(merchant)} \u5b8c\u6210\u4ea4\u6613\uff1a${this.formatNodeCoord(merchant.startNodeId)} \u2192 ${this.formatNodeCoord(merchant.endNodeId)}\uff0c\u6700\u77ed\u957f\u5ea6 ${path.length}\uff0c\u7b49\u6982\u7387\u5019\u9009\u8def\u5f84 ${path.pathCount} \u6761`, { merchant, path, tollDetails });
 
     if (merchant.index === 5) {
       this.endGame();

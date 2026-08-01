@@ -24,6 +24,8 @@ let engine = null;
 let uiMode = { type: 'SETUP' };
 let pendingWaitTimer = null;
 let pendingWaitSeq = 0;
+let merchantAnimation = null;
+let merchantAnimationFrame = null;
 
 const POS = { xMargin: 250, yMargin: 60, step: 100 };
 const LEFT_PANEL = { x: -115, width: 230 };
@@ -104,7 +106,7 @@ function htmlEscape(str) {
   return String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 }
 
-function showAnnouncement(title, body) {
+function showAnnouncement(title, body, { onClose, buttonText = '\u77e5\u9053\u4e86' } = {}) {
   document.querySelectorAll('.announcement-backdrop').forEach(n => n.remove());
   const backdrop = document.createElement('div');
   backdrop.className = 'announcement-backdrop';
@@ -116,12 +118,127 @@ function showAnnouncement(title, body) {
   p.textContent = body;
   const btn = document.createElement('button');
   btn.className = 'primary';
-  btn.textContent = '\u77e5\u9053\u4e86';
-  btn.addEventListener('click', () => backdrop.remove());
+  btn.textContent = buttonText;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    backdrop.remove();
+    onClose?.();
+  };
+  btn.addEventListener('click', close);
   dialog.append(h, p, btn);
   backdrop.appendChild(dialog);
-  backdrop.addEventListener('click', event => { if (event.target === backdrop) backdrop.remove(); });
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
   document.body.appendChild(backdrop);
+}
+
+function cancelMerchantAnimation() {
+  if (merchantAnimationFrame !== null) cancelAnimationFrame(merchantAnimationFrame);
+  merchantAnimationFrame = null;
+  merchantAnimation = null;
+}
+
+function travellerPosition(nodeIds, progress) {
+  const routePoints = (nodeIds || [])
+    .map(nodeId => engine?.state.nodes[nodeId])
+    .filter(Boolean)
+    .map(point);
+  if (!routePoints.length) return null;
+  if (routePoints.length === 1) return routePoints[0];
+
+  const clamped = Math.max(0, Math.min(1, progress));
+  const scaled = clamped * (routePoints.length - 1);
+  const segment = Math.min(Math.floor(scaled), routePoints.length - 2);
+  const fraction = clamped >= 1 ? 1 : scaled - segment;
+  const from = routePoints[segment];
+  const to = routePoints[segment + 1];
+  return {
+    x: from.x + (to.x - from.x) * fraction,
+    y: from.y + (to.y - from.y) * fraction,
+  };
+}
+
+function updateMerchantTravellerMarker() {
+  const marker = document.getElementById('merchantTraveller');
+  if (!marker || !merchantAnimation) return;
+  const position = travellerPosition(merchantAnimation.nodeIds, merchantAnimation.progress);
+  if (position) marker.setAttribute('transform', `translate(${position.x} ${position.y})`);
+}
+
+function startMerchantCompletionAnimation(merchant, onComplete) {
+  cancelMerchantAnimation();
+  const nodeIds = [...(merchant.chosenPathNodeIds || [])];
+  if (nodeIds.length < 2) {
+    onComplete?.();
+    return;
+  }
+
+  merchantAnimation = {
+    merchant: { ...merchant, chosenPathNodeIds: nodeIds },
+    nodeIds,
+    progress: 0,
+  };
+  uiMode = { type: 'MERCHANT_ANIMATION' };
+  render();
+
+  const duration = Math.min(9000, Math.max(1800, (nodeIds.length - 1) * 780));
+  let startedAt = null;
+  const advance = timestamp => {
+    if (!merchantAnimation) return;
+    if (startedAt === null) startedAt = timestamp;
+    merchantAnimation.progress = Math.min(1, (timestamp - startedAt) / duration);
+    updateMerchantTravellerMarker();
+    if (merchantAnimation.progress < 1) {
+      merchantAnimationFrame = requestAnimationFrame(advance);
+      return;
+    }
+    merchantAnimationFrame = null;
+    merchantAnimation = null;
+    onComplete?.();
+  };
+  merchantAnimationFrame = requestAnimationFrame(advance);
+}
+
+function currentScoreRankings() {
+  if (!engine) return [];
+  return engine.state.playerOrder
+    .map(id => {
+      const player = engine.state.players[id];
+      return {
+        ...player,
+        roads: engine.getPlayerRoadCount(id),
+        bridges: engine.getPlayerBridgeCount(id),
+      };
+    })
+    .sort((a, b) => (b.tollMoney - a.tollMoney) || (b.roads - a.roads) || (b.bridges - a.bridges));
+}
+
+function scoreLines(rankings = currentScoreRankings()) {
+  return rankings.map((player, index) => (
+    `${index + 1}. ${player.name}\uff1a${player.tollMoney}$ \u00b7 \u9053\u8def ${player.roads} \u00b7 \u6865\u6881 ${player.bridges}`
+  )).join('\n');
+}
+
+function showMerchantSettlement(merchant, onClose) {
+  const route = routeLabel(merchant.startNodeId, merchant.endNodeId);
+  const length = merchant.chosenPathEdgeIds?.length ?? Math.max(0, (merchant.chosenPathNodeIds?.length || 1) - 1);
+  showAnnouncement(
+    `${merchantName(merchant)} \u5b8c\u6210\u4ea4\u6613`,
+    `${route}\n\u5546\u4eba\u5df2\u6cbf\u5b9e\u9645\u6700\u77ed\u8def\u5f84\u5b8c\u6210\u4ea4\u6613\uff08\u5171 ${length} \u6bb5\uff09\uff0c\u8fc7\u8def\u8d39\u5df2\u7ed3\u7b97\u3002\n\n\u5f53\u524d\u5f97\u5206\n${scoreLines()}`,
+    { onClose, buttonText: '\u67e5\u770b\u5f97\u5206' },
+  );
+}
+
+function showGameResultAnnouncement() {
+  if (!engine?.state.result) return;
+  const { rankings, winners } = engine.state.result;
+  const winnerNames = winners.map(id => engine.state.players[id].name).join('\u3001');
+  showAnnouncement(
+    '\u6e38\u620f\u7ed3\u675f',
+    `\u606d\u559c ${winnerNames} \u83b7\u80dc\uff01\n\n\u6700\u7ec8\u6392\u540d\n${scoreLines(rankings)}`,
+    { buttonText: '\u67e5\u770b\u5730\u56fe' },
+  );
 }
 
 function clearPendingWait() {
@@ -175,6 +292,7 @@ renderPlayerInputs();
 
 createGameBtn.addEventListener('click', () => {
   clearPendingWait();
+  cancelMerchantAnimation();
   const count = Number(playerCountInput.value);
   const players = [];
   for (let i = 1; i <= count; i++) {
@@ -188,6 +306,8 @@ createGameBtn.addEventListener('click', () => {
 
 newGameTopBtn.addEventListener('click', () => {
   clearPendingWait();
+  cancelMerchantAnimation();
+  document.querySelectorAll('.announcement-backdrop').forEach(n => n.remove());
   engine = null;
   uiMode = { type: 'SETUP' };
   setupPanel.style.display = '';
@@ -494,6 +614,22 @@ function renderBuildLegend() {
   svg.appendChild(svgText('\u4fee\u8def\u540e\u9053\u8def\u76d6\u5728\u6865\u4e0a', { x: cx, y: y + 141, class: 'map-legend-note' }));
 }
 
+function renderMerchantTraveller() {
+  if (!merchantAnimation) return;
+  const position = travellerPosition(merchantAnimation.nodeIds, merchantAnimation.progress);
+  if (!position) return;
+  const group = el('g', {
+    id: 'merchantTraveller',
+    class: 'merchant-traveller',
+    transform: `translate(${position.x} ${position.y})`,
+    'aria-label': `${merchantName(merchantAnimation.merchant)} \u6b63\u5728\u6cbf\u6700\u77ed\u8def\u5f84\u4ea4\u6613`,
+  });
+  group.appendChild(el('circle', { r: 19, class: 'merchant-traveller-halo' }));
+  group.appendChild(el('circle', { r: 15, class: 'merchant-traveller-marker' }));
+  group.appendChild(svgText('\u5546', { x: 0, y: 1, class: 'merchant-traveller-label' }));
+  svg.appendChild(group);
+}
+
 function renderDiceDisplay(state) {
   const nonce = state.diceAnimationNonce || 0;
   const g = el('g', { class: 'dice-panel', 'data-nonce': nonce, transform: 'translate(790 190)' });
@@ -556,7 +692,8 @@ function renderBoard() {
     if (e.roadOwnerId) svg.appendChild(el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'road-edge', stroke: players[e.roadOwnerId].color }));
   }
 
-  renderMerchantOverlay(nodes, currentMerchant);
+  const displayedMerchant = merchantAnimation?.merchant || currentMerchant;
+  renderMerchantOverlay(nodes, displayedMerchant);
   renderBuildLegend();
 
   for (const e of Object.values(edges)) {
@@ -572,8 +709,8 @@ function renderBoard() {
     const classes = ['node', n.region === 'CITY' ? 'region-city' : 'region-country'];
     if (nodeSet.has(n.id)) classes.push('selectable');
     if (uiMode.baseNodeId === n.id) classes.push('base-selected');
-    if (currentMerchant?.startNodeId === n.id) classes.push('merchant-start');
-    if (currentMerchant?.endNodeId === n.id) classes.push('merchant-end');
+    if (displayedMerchant?.startNodeId === n.id) classes.push('merchant-start');
+    if (displayedMerchant?.endNodeId === n.id) classes.push('merchant-end');
 
     const circle = el('circle', { cx: p.x, cy: p.y, r: 22, class: classes.join(' ') });
     circle.addEventListener('click', () => onNodeClick(n.id));
@@ -582,6 +719,7 @@ function renderBoard() {
     svg.appendChild(svgText(`(${n.col},${n.row}) ${regionName(n.region)}`, { x: p.x, y: p.y + 35, class: 'node-coord' }));
   }
   renderDiceDisplay(engine.state);
+  renderMerchantTraveller();
 }
 
 function renderStatus() {
@@ -594,7 +732,7 @@ function renderStatus() {
   const s = engine.state;
   phaseBadge.textContent = s.phase === PHASE.PRE_BUILD ? '开局预建设' : s.phase === PHASE.PLAYER_TURN ? '正式回合' : '游戏结束';
   const currentName = s.phase === PHASE.PRE_BUILD ? s.players[engine.preBuildPlayerId]?.name : s.players[engine.currentPlayerId]?.name;
-  const merchant = s.currentMerchant;
+  const merchant = merchantAnimation?.merchant || s.currentMerchant;
   const lines = [];
   lines.push(`<div class="kv-row"><span>当前阶段</span><b>${phaseBadge.textContent}</b></div>`);
   lines.push(`<div class="kv-row"><span>当前玩家</span><b>${htmlEscape(currentName || '-')}</b></div>`);
@@ -607,12 +745,13 @@ function renderStatus() {
   if (s.result) lines.push(`<p><b>获胜者：</b>${s.result.winners.map(id => htmlEscape(s.players[id].name)).join('、')}</p>`);
   statusPanel.innerHTML = lines.join('');
   boardHint.textContent = hintText();
-  boardHint.classList.toggle('waiting-hint', uiMode.type === 'WAITING_MESSAGE');
+  boardHint.classList.toggle('waiting-hint', uiMode.type === 'WAITING_MESSAGE' || uiMode.type === 'MERCHANT_ANIMATION');
 }
 
 
 function hintText() {
   if (!engine) return '创建游戏后开始。';
+  if (uiMode.type === 'MERCHANT_ANIMATION') return '\u5546\u4eba\u6b63\u5728\u6cbf\u5b9e\u9645\u6700\u77ed\u8def\u5f84\u4ea4\u6613\uff0c\u8bf7\u7a0d\u5019\u3002';
   if (engine.state.phase === PHASE.PRE_BUILD) return `开局预建设：请为 ${engine.state.players[engine.preBuildPlayerId].name} 点击一条高亮边修建初始道路。`;
   if (engine.state.phase === PHASE.GAME_END) return '游戏结束。黄色粗线显示最近一次商人实际最短路径。';
   const map = {
@@ -626,6 +765,7 @@ function hintText() {
     CARD_SELECT_ROAD_TO_REMOVE: '拆路修桥卡：先点击自己的一条高亮道路作为原材料。',
     CARD_SELECT_BRIDGE_EDGE: '拆路修桥卡：再点击任意一条无桥跨河高亮边修桥。',
     WAITING_MESSAGE: uiMode.message || '\u8bf7\u7b49\u5f85\u5f53\u524d\u63d0\u793a\u5b8c\u6210\u3002',
+    MERCHANT_ANIMATION: '\u5546\u4eba\u6b63\u5728\u6cbf\u5b9e\u9645\u6700\u77ed\u8def\u5f84\u4ea4\u6613\uff0c\u8bf7\u7a0d\u5019\u3002',
   };
   return map[uiMode.type] || '请选择操作。';
 }
@@ -656,9 +796,14 @@ function renderActions() {
     actionPanel.innerHTML = `<p>请在地图上点击高亮边，为 <b>${htmlEscape(s.players[engine.preBuildPlayerId].name)}</b> 修建一条初始道路。</p>`;
     return;
   }
+  if (uiMode.type === 'MERCHANT_ANIMATION') {
+    actionPanel.innerHTML = `<p class="waiting-message">${htmlEscape(hintText())}</p>`;
+    return;
+  }
+
   if (s.phase === PHASE.GAME_END) {
-    const rows = s.result.rankings.map((p, i) => `<div class="player-row"><b>#${i + 1} ${htmlEscape(p.name)}</b><span>${p.tollMoney}$ · 路 ${p.roads}</span></div>`).join('');
-    actionPanel.innerHTML = `<p>第 5 位商人已完成交易。</p>${rows}`;
+    const rows = s.result.rankings.map((p, i) => `<div class="player-row"><b>#${i + 1} ${htmlEscape(p.name)}</b><span>${p.tollMoney}$ \u00b7 \u8def ${p.roads} \u00b7 \u6865 ${p.bridges}</span></div>`).join('');
+    actionPanel.innerHTML = `<p>\u7b2c 5 \u4f4d\u5546\u4eba\u5df2\u5b8c\u6210\u4ea4\u6613\u3002</p>${rows}`;
     return;
   }
 
@@ -723,7 +868,7 @@ function render() {
 }
 
 function onNodeClick(nodeId) {
-  if (!engine) return;
+  if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
   try {
     if (uiMode.type === 'SELECT_BASE_ROAD') {
       const buildableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
@@ -757,7 +902,7 @@ function onNodeClick(nodeId) {
 }
 
 function onEdgeClick(edgeIdValue) {
-  if (!engine) return;
+  if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
   const selectable = selectableEdges();
   if (!selectable.has(edgeIdValue)) return;
   try {
@@ -831,9 +976,28 @@ function processDrawCardAndMaybeFinish() {
 function finishTurn() {
   clearPendingWait();
   const previousMerchantIndex = engine.state.currentMerchant?.index;
+  const completedCount = engine.state.completedMerchants.length;
   engine.finishActionAndAdvance();
+
+  const completedMerchant = engine.state.completedMerchants.length > completedCount
+    ? engine.state.completedMerchants.at(-1)
+    : null;
+  const gameEnded = engine.state.phase === PHASE.GAME_END;
   const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
-  uiMode = { type: engine.state.phase === PHASE.GAME_END ? 'GAME_END' : 'IDLE' };
+
+  if (completedMerchant) {
+    startMerchantCompletionAnimation(completedMerchant, () => {
+      uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
+      render();
+      showMerchantSettlement(completedMerchant, () => {
+        if (gameEnded) showGameResultAnnouncement();
+        else if (shouldAnnounceBigMerchant) showAnnouncement('\u5927\u5546\u4eba\u524d\u6765\u4ea4\u6613', '\u57ce\u4e61\u57fa\u5efa\u8fdb\u5165\u51b2\u523a\u9636\u6bb5');
+      });
+    });
+    return;
+  }
+
+  uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
   render();
   if (shouldAnnounceBigMerchant) {
     showAnnouncement('\u5927\u5546\u4eba\u524d\u6765\u4ea4\u6613', '\u57ce\u4e61\u57fa\u5efa\u8fdb\u5165\u51b2\u523a\u9636\u6bb5');

@@ -99,6 +99,24 @@ function testFirstQuadrantCoordinateLabels() {
   console.log('first-quadrant coordinate label test passed');
 }
 
+function testMerchantLogCoordinates() {
+  const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'merchant-log-coordinates' });
+  game.spawnMerchant(5);
+  const spawnLog = game.state.log[0];
+  assert.match(spawnLog.message, /\(6,6\) \u2192 \(1,1\)/, 'merchant spawn log must use first-quadrant coordinates');
+  assert.doesNotMatch(spawnLog.message, /r6c6|r1c1/, 'merchant spawn log must not expose internal node IDs');
+
+  for (const edge of Object.values(game.state.edges)) {
+    edge.roadOwnerId = 'P1';
+    if (edge.isRiverCrossing) edge.bridgeOwnerId = 'P1';
+  }
+  assert.equal(game.checkMerchantCompletion(), true, 'fully connected map should complete the merchant route');
+  const completionLog = game.state.log.find(entry => entry.type === 'MERCHANT_COMPLETED');
+  assert.match(completionLog.message, /\(6,6\) \u2192 \(1,1\)/, 'merchant completion log must use first-quadrant coordinates');
+  assert.doesNotMatch(completionLog.message, /r6c6|r1c1/, 'merchant completion log must not expose internal node IDs');
+  console.log('merchant log coordinate formatting test passed');
+}
+
 function testSubsidyAndMerchantTypes() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'subsidy-merchant' });
   const playerId = game.currentPlayerId;
@@ -157,6 +175,7 @@ testBuildRules();
 testBuildableBasesForDie1();
 testSecondDieFiltersOccupiedTargets();
 testFirstQuadrantCoordinateLabels();
+testMerchantLogCoordinates();
 testSubsidyAndMerchantTypes();
 testUniformShortestPathDP();
 console.log('全部测试通过');
