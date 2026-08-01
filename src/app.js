@@ -200,24 +200,30 @@ function startMerchantCompletionAnimation(merchant, onComplete) {
   merchantAnimationFrame = requestAnimationFrame(advance);
 }
 
-function currentScoreRankings() {
-  if (!engine) return [];
-  return engine.state.playerOrder
-    .map(id => {
-      const player = engine.state.players[id];
-      return {
-        ...player,
-        roads: engine.getPlayerRoadCount(id),
-        bridges: engine.getPlayerBridgeCount(id),
-      };
-    })
-    .sort((a, b) => (b.tollMoney - a.tollMoney) || (b.roads - a.roads) || (b.bridges - a.bridges));
-}
-
-function scoreLines(rankings = currentScoreRankings()) {
+function finalScoreLines(rankings) {
   return rankings.map((player, index) => (
     `${index + 1}. ${player.name}\uff1a${player.tollMoney}$ \u00b7 \u9053\u8def ${player.roads} \u00b7 \u6865\u6881 ${player.bridges}`
   )).join('\n');
+}
+
+function roundScoreLines(merchant) {
+  const feesByPlayer = new Map();
+  for (const detail of merchant.tollDetails || []) {
+    const entry = feesByPlayer.get(detail.playerId) || { roadFee: 0, bridgeFee: 0 };
+    if (detail.kind === 'BRIDGE') entry.bridgeFee += detail.amount;
+    else entry.roadFee += detail.amount;
+    feesByPlayer.set(detail.playerId, entry);
+  }
+
+  return engine.state.playerOrder.map(id => {
+    const player = engine.state.players[id];
+    const { roadFee = 0, bridgeFee = 0 } = feesByPlayer.get(id) || {};
+    const total = roadFee + bridgeFee;
+    const detailLines = [];
+    if (roadFee) detailLines.push(`\u9053\u8def ${roadFee}$`);
+    if (bridgeFee) detailLines.push(`\u6865\u6881 ${bridgeFee}$`);
+    return `${player.name}\uff1a+${total}$${detailLines.length ? `\uff08${detailLines.join(' \u00b7 ')}\uff09` : ''}`;
+  }).join('\n');
 }
 
 function showMerchantSettlement(merchant, onClose) {
@@ -225,8 +231,8 @@ function showMerchantSettlement(merchant, onClose) {
   const length = merchant.chosenPathEdgeIds?.length ?? Math.max(0, (merchant.chosenPathNodeIds?.length || 1) - 1);
   showAnnouncement(
     `${merchantName(merchant)} \u5b8c\u6210\u4ea4\u6613`,
-    `${route}\n\u5546\u4eba\u5df2\u6cbf\u5b9e\u9645\u6700\u77ed\u8def\u5f84\u5b8c\u6210\u4ea4\u6613\uff08\u5171 ${length} \u6bb5\uff09\uff0c\u8fc7\u8def\u8d39\u5df2\u7ed3\u7b97\u3002\n\n\u5f53\u524d\u5f97\u5206\n${scoreLines()}`,
-    { onClose, buttonText: '\u67e5\u770b\u5f97\u5206' },
+    `${route}\n\u5546\u4eba\u5df2\u6cbf\u5b9e\u9645\u6700\u77ed\u8def\u5f84\u5b8c\u6210\u4ea4\u6613\uff08\u5171 ${length} \u6bb5\uff09\uff0c\u8fc7\u8def\u8d39\u5df2\u7ed3\u7b97\u3002\n\n\u672c\u8f6e\u5f97\u5206\n${roundScoreLines(merchant)}`,
+    { onClose, buttonText: '\u7ee7\u7eed\u6e38\u620f' },
   );
 }
 
@@ -236,7 +242,7 @@ function showGameResultAnnouncement() {
   const winnerNames = winners.map(id => engine.state.players[id].name).join('\u3001');
   showAnnouncement(
     '\u6e38\u620f\u7ed3\u675f',
-    `\u606d\u559c ${winnerNames} \u83b7\u80dc\uff01\n\n\u6700\u7ec8\u6392\u540d\n${scoreLines(rankings)}`,
+    `\u606d\u559c ${winnerNames} \u83b7\u80dc\uff01\n\n\u6700\u7ec8\u6392\u540d\n${finalScoreLines(rankings)}`,
     { buttonText: '\u67e5\u770b\u5730\u56fe' },
   );
 }

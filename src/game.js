@@ -691,6 +691,7 @@ export class GameEngine {
     merchant.completed = true;
     merchant.chosenPathEdgeIds = path.edgeIds;
     merchant.chosenPathNodeIds = path.nodeIds;
+    merchant.tollDetails = tollDetails;
     this.state.completedMerchants.push(merchant);
     this.state.lastMerchantPath = path.edgeIds;
     this.log('MERCHANT_COMPLETED', `${merchantName(merchant)} \u5b8c\u6210\u4ea4\u6613\uff1a${this.formatNodeCoord(merchant.startNodeId)} \u2192 ${this.formatNodeCoord(merchant.endNodeId)}\uff0c\u6700\u77ed\u957f\u5ea6 ${path.length}\uff0c\u7b49\u6982\u7387\u5019\u9009\u8def\u5f84 ${path.pathCount} \u6761`, { merchant, path, tollDetails });

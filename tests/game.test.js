@@ -114,6 +114,13 @@ function testMerchantLogCoordinates() {
   const completionLog = game.state.log.find(entry => entry.type === 'MERCHANT_COMPLETED');
   assert.match(completionLog.message, /\(6,6\) \u2192 \(1,1\)/, 'merchant completion log must use first-quadrant coordinates');
   assert.doesNotMatch(completionLog.message, /r6c6|r1c1/, 'merchant completion log must not expose internal node IDs');
+  const completedMerchant = game.state.completedMerchants.at(-1);
+  assert.ok(completedMerchant.tollDetails.length > 0, 'completed merchant should retain this-round toll details for the settlement UI');
+  assert.equal(
+    completedMerchant.tollDetails.reduce((total, detail) => total + detail.amount, 0),
+    game.state.players.P1.tollMoney,
+    'this-round toll detail total should equal the awarded score on the fully P1-owned map',
+  );
   console.log('merchant log coordinate formatting test passed');
 }
 
