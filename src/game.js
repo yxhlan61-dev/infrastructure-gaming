@@ -159,43 +159,33 @@ export function validateMap(nodes, edges) {
   };
 }
 
+function boundaryColForRow(row) {
+  // A continuous diagonal river boundary from upper-left to lower-right.
+  // City nodes are below/left of the river, countryside nodes are above/right.
+  return 6 - row;
+}
+
 export function generateMap(random) {
-  for (let attempt = 0; attempt < 5000; attempt++) {
-    const nodes = createNodes();
-    const allIds = Object.keys(nodes);
-    const citySize = random.int(10, 26);
-    const city = new Set(['r1c1']);
-
-    while (city.size < citySize) {
-      const frontier = [];
-      for (const id of city) {
-        for (const nb of neighborsOf(id)) {
-          if (!city.has(nb) && nb !== 'r6c6') frontier.push(nb);
-        }
-      }
-      if (!frontier.length) break;
-      city.add(random.choice(frontier));
-    }
-    if (city.size !== citySize || city.has('r6c6')) continue;
-
-    for (const id of allIds) nodes[id].region = city.has(id) ? REGION.CITY : REGION.COUNTRYSIDE;
-    const cityIds = allIds.filter(id => nodes[id].region === REGION.CITY);
-    const countryIds = allIds.filter(id => nodes[id].region === REGION.COUNTRYSIDE);
-    if (!isConnected(cityIds) || !isConnected(countryIds)) continue;
-
-    const edges = createEdges(nodes);
-    for (const e of Object.values(edges)) {
-      e.isRiverCrossing = nodes[e.nodeA].region !== nodes[e.nodeB].region;
-    }
-    if (!Object.values(edges).some(e => e.isRiverCrossing)) continue;
-
-    const numbers = [];
-    for (let n = 1; n <= 6; n++) for (let i = 0; i < 6; i++) numbers.push(n);
-    const shuffled = random.shuffle(numbers);
-    allIds.forEach((id, i) => { nodes[id].diceNumber = shuffled[i]; });
-    return { nodes, edges };
+  const nodes = createNodes();
+  const allIds = Object.keys(nodes);
+  for (const id of allIds) {
+    const { row, col } = nodes[id];
+    nodes[id].region = col <= boundaryColForRow(row) ? REGION.CITY : REGION.COUNTRYSIDE;
   }
-  throw new Error('地图生成失败：无法在限定次数内生成合法地图');
+
+  const edges = createEdges(nodes);
+  for (const e of Object.values(edges)) {
+    e.isRiverCrossing = nodes[e.nodeA].region !== nodes[e.nodeB].region;
+  }
+
+  const numbers = [];
+  for (let n = 1; n <= 6; n++) for (let i = 0; i < 6; i++) numbers.push(n);
+  const shuffled = random.shuffle(numbers);
+  allIds.forEach((id, i) => { nodes[id].diceNumber = shuffled[i]; });
+
+  const validation = validateMap(nodes, edges);
+  if (!validation.ok) throw new Error(`Invalid fixed river map: ${JSON.stringify(validation)}`);
+  return { nodes, edges };
 }
 
 export class GameEngine {

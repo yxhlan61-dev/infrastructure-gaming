@@ -6,7 +6,7 @@
   <title>城乡基建 MVP</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
-<body>
+<body class="is-setup">
   <header class="topbar">
     <div>
       <h1>城乡基建</h1>
@@ -19,7 +19,6 @@
     <section class="board-panel">
       <div id="setupPanel" class="card setup-card">
         <h2>创建游戏</h2>
-        <label>随机种子 <input id="seedInput" value="demo-seed" /></label>
         <label>玩家数量
           <select id="playerCountInput">
             <option value="2">2</option>
@@ -36,7 +35,7 @@
           <h2>地图</h2>
           <div id="phaseBadge" class="badge">未开始</div>
         </div>
-        <svg id="gameBoard" viewBox="0 0 930 620" role="img" aria-label="城乡基建地图"></svg>
+        <svg id="gameBoard" viewBox="-90 0 1020 620" role="img" aria-label="城乡基建地图"></svg>
         <p class="hint" id="boardHint">创建游戏后开始。</p>
       </div>
     </section>

@@ -532,3 +532,78 @@ button {
   font-size: 14px;
   font-weight: 800;
 }
+
+/* Setup landing page: hide inactive game chrome until a game is created. */
+body.is-setup {
+  background: #eef4ff;
+}
+body.is-setup .layout {
+  display: flex;
+  justify-content: center;
+  padding: 34px 20px;
+}
+body.is-setup .board-panel {
+  width: min(980px, calc(100vw - 40px));
+  display: block;
+}
+body.is-setup .setup-card {
+  display: block;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 30px;
+  border-radius: 22px;
+  box-shadow: 0 24px 70px rgba(30, 41, 59, .14);
+}
+body.is-setup .setup-card h2 {
+  margin-bottom: 10px;
+  font-size: 30px;
+  letter-spacing: -.4px;
+}
+.setup-intro {
+  margin: 0 0 24px;
+  color: #475569;
+  font-size: 15px;
+  line-height: 1.7;
+}
+body.is-setup .setup-card label {
+  margin: 14px 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+}
+body.is-setup .setup-card input,
+body.is-setup .setup-card select {
+  height: 42px;
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.setup-start {
+  width: 100%;
+  margin-top: 18px;
+  padding: 13px 18px;
+  border-radius: 11px;
+  background: #4f46e5;
+}
+body.is-setup .board-card,
+body.is-setup .side-panel {
+  display: none;
+}
+body:not(.is-setup) .setup-card {
+  display: none !important;
+}
+
+/* Wider board viewBox gives the left prompt cards more breathing room. */
+#gameBoard {
+  max-width: 1080px;
+}
+.region-bg {
+  opacity: .72;
+  stroke: none;
+}
+.river-curve-bank {
+  stroke-width: 25;
+}
+.river-curve {
+  stroke-width: 15;
+}

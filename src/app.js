@@ -12,7 +12,6 @@ const setupPanel = document.getElementById('setupPanel');
 const playerCountInput = document.getElementById('playerCountInput');
 const playerNameInputs = document.getElementById('playerNameInputs');
 const createGameBtn = document.getElementById('createGameBtn');
-const seedInput = document.getElementById('seedInput');
 const newGameTopBtn = document.getElementById('newGameTopBtn');
 const statusPanel = document.getElementById('statusPanel');
 const actionPanel = document.getElementById('actionPanel');
@@ -27,8 +26,20 @@ let pendingWaitTimer = null;
 let pendingWaitSeq = 0;
 
 const POS = { xMargin: 250, yMargin: 60, step: 100 };
+const LEFT_PANEL = { x: -55, width: 230 };
 function point(node) {
   return { x: POS.xMargin + (node.row - 1) * POS.step, y: POS.yMargin + (6 - node.col) * POS.step };
+}
+function mapBounds() {
+  return {
+    left: POS.xMargin - POS.step / 2,
+    right: POS.xMargin + POS.step * 5 + POS.step / 2,
+    top: POS.yMargin - POS.step / 2,
+    bottom: POS.yMargin + POS.step * 5 + POS.step / 2,
+  };
+}
+function createRandomSeed() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 function centerSegment(a, b, ratio = 0.5) {
   // Bridge occupies only the centered half of the edge: from 1/4 to 3/4.
@@ -168,7 +179,7 @@ createGameBtn.addEventListener('click', () => {
   for (let i = 1; i <= count; i++) {
     players.push({ name: document.getElementById(`playerName${i}`).value.trim() || `玩家${i}` });
   }
-  engine = new GameEngine({ players, seed: seedInput.value.trim() || Date.now() });
+  engine = new GameEngine({ players, seed: createRandomSeed() });
   setupPanel.style.display = 'none';
   uiMode = { type: 'IDLE' };
   render();
@@ -224,35 +235,40 @@ function renderMerchantOverlay(nodes, currentMerchant) {
   const merchantType = currentMerchant.type === 'BIG' ? '\u5927\u5546\u4eba' : '\u5c0f\u5546\u4eba';
   const { roadFee, bridgeFee } = merchantTollInfo(currentMerchant);
 
-  svg.appendChild(el('rect', { x: 10, y: 92, width: 222, height: 114, rx: 14, class: 'merchant-info-box' }));
+  const boxX = LEFT_PANEL.x;
+  const boxW = LEFT_PANEL.width;
+  const boxCx = boxX + boxW / 2;
+  svg.appendChild(el('rect', { x: boxX, y: 92, width: boxW, height: 114, rx: 14, class: 'merchant-info-box' }));
   svg.appendChild(svgMultilineText([
     `${merchantType}\u4f1a\u6cbf\u7740\u6700\u77ed\u8def\u5f84\u8fdb\u884c\u4ea4\u6613`,
     `\u9053\u8def\u8fc7\u8def\u8d39 ${roadFee}$ / \u6bb5`,
     `\u6865\u6881\u8fc7\u8def\u8d39 ${bridgeFee}$ / \u5ea7`,
     '\u8bf7\u5c3d\u53ef\u80fd\u591a\u7684\u5b8c\u5584\u57ce\u4e61\u57fa\u5efa\u5427',
-  ], { x: 121, y: 122, class: 'merchant-info-text' }, 23));
+  ], { x: boxCx, y: 122, class: 'merchant-info-text' }, 23));
 
-  svg.appendChild(el('rect', { x: 10, y: 222, width: 222, height: 68, rx: 14, class: 'merchant-route-box' }));
-  svg.appendChild(svgText('\u5f53\u524d\u5546\u4eba\u8def\u7ebf', { x: 121, y: 247, class: 'merchant-route-title' }));
-  svg.appendChild(svgText(routeLabel(currentMerchant.startNodeId, currentMerchant.endNodeId), { x: 121, y: 275, class: 'merchant-route-text' }));
+  svg.appendChild(el('rect', { x: boxX, y: 222, width: boxW, height: 68, rx: 14, class: 'merchant-route-box' }));
+  svg.appendChild(svgText('\u5f53\u524d\u5546\u4eba\u8def\u7ebf', { x: boxCx, y: 247, class: 'merchant-route-title' }));
+  svg.appendChild(svgText(routeLabel(currentMerchant.startNodeId, currentMerchant.endNodeId), { x: boxCx, y: 275, class: 'merchant-route-text' }));
 
-  svg.appendChild(el('rect', { x: 10, y: 304, width: 222, height: 58, rx: 14, class: 'final-route-box' }));
-  svg.appendChild(svgText('\u6700\u540e\u4e00\u4e2a\u5927\u5546\u4eba\u56fa\u5b9a\u8def\u7ebf', { x: 121, y: 327, class: 'final-route-title' }));
-  svg.appendChild(svgText(routeLabel('r6c6', 'r1c1'), { x: 121, y: 351, class: 'final-route-text' }));
+  svg.appendChild(el('rect', { x: boxX, y: 304, width: boxW, height: 58, rx: 14, class: 'final-route-box' }));
+  svg.appendChild(svgText('\u6700\u540e\u4e00\u4e2a\u5927\u5546\u4eba\u56fa\u5b9a\u8def\u7ebf', { x: boxCx, y: 327, class: 'final-route-title' }));
+  svg.appendChild(svgText(routeLabel('r6c6', 'r1c1'), { x: boxCx, y: 351, class: 'final-route-text' }));
 }
 
-function drawRegionBackground(nodes) {
-  const cell = POS.step;
-  for (const n of Object.values(nodes)) {
-    const p = point(n);
-    svg.appendChild(el('rect', {
-      x: p.x - cell / 2,
-      y: p.y - cell / 2,
-      width: cell,
-      height: cell,
-      class: `region-bg ${n.region === 'CITY' ? 'region-bg-city' : 'region-bg-country'}`,
-    }));
-  }
+function drawRegionBackground(nodes, edges) {
+  const b = mapBounds();
+  svg.appendChild(el('rect', {
+    x: b.left,
+    y: b.top,
+    width: b.right - b.left,
+    height: b.bottom - b.top,
+    class: 'region-bg region-bg-country',
+  }));
+
+  const riverPoints = riverCurvePoints(nodes, edges);
+  if (riverPoints.length < 2) return;
+  const d = `${catmullRomPath(riverPoints)} L ${b.right.toFixed(1)} ${b.bottom.toFixed(1)} L ${b.left.toFixed(1)} ${b.bottom.toFixed(1)} Z`;
+  svg.appendChild(el('path', { d, class: 'region-bg region-bg-city' }));
 }
 
 function catmullRomPath(points) {
@@ -273,7 +289,31 @@ function catmullRomPath(points) {
   return d;
 }
 
+function intersectRayWithBounds(point, direction, bounds) {
+  const candidates = [];
+  const addCandidate = (t, x, y) => {
+    if (t > 0 && x >= bounds.left - 0.01 && x <= bounds.right + 0.01 && y >= bounds.top - 0.01 && y <= bounds.bottom + 0.01) {
+      candidates.push({ t, x, y });
+    }
+  };
+  if (direction.x !== 0) {
+    let t = (bounds.left - point.x) / direction.x;
+    addCandidate(t, bounds.left, point.y + direction.y * t);
+    t = (bounds.right - point.x) / direction.x;
+    addCandidate(t, bounds.right, point.y + direction.y * t);
+  }
+  if (direction.y !== 0) {
+    let t = (bounds.top - point.y) / direction.y;
+    addCandidate(t, point.x + direction.x * t, bounds.top);
+    t = (bounds.bottom - point.y) / direction.y;
+    addCandidate(t, point.x + direction.x * t, bounds.bottom);
+  }
+  candidates.sort((a, b) => a.t - b.t);
+  return candidates[0] || point;
+}
+
 function riverCurvePoints(nodes, edges) {
+  const seen = new Set();
   const points = Object.values(edges)
     .filter(e => e.isRiverCrossing)
     .map(e => {
@@ -281,15 +321,22 @@ function riverCurvePoints(nodes, edges) {
       const b = point(nodes[e.nodeB]);
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     })
-    .sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x || a.y - b.y);
+    .sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x || a.y - b.y)
+    .filter(p => {
+      const key = `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   if (points.length > 1) {
+    const bounds = mapBounds();
     const first = points[0];
     const second = points[1];
-    const before = { x: first.x - (second.x - first.x) * 0.75, y: first.y - (second.y - first.y) * 0.75 };
     const last = points[points.length - 1];
     const prev = points[points.length - 2];
-    const after = { x: last.x + (last.x - prev.x) * 0.75, y: last.y + (last.y - prev.y) * 0.75 };
+    const before = intersectRayWithBounds(first, { x: first.x - second.x, y: first.y - second.y }, bounds);
+    const after = intersectRayWithBounds(last, { x: last.x - prev.x, y: last.y - prev.y }, bounds);
     return [before, ...points, after];
   }
   return points;
@@ -349,7 +396,7 @@ function renderBoard() {
   const nodeSet = selectableNodes();
   const pathSet = new Set(lastMerchantPath || []);
 
-  drawRegionBackground(nodes);
+  drawRegionBackground(nodes, edges);
 
   for (const e of Object.values(edges)) {
     const a = point(nodes[e.nodeA]);
@@ -539,6 +586,7 @@ function renderLog() {
 }
 
 function render() {
+  document.body.classList.toggle('is-setup', !engine);
   renderBoard();
   renderStatus();
   renderPlayers();
