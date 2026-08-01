@@ -13,7 +13,7 @@ export const PHASE = {
 };
 
 export class RandomService {
-  constructor(seed = Date.now()) {
+  constructor(seed = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
     this.state = RandomService.hashSeed(String(seed));
     if (this.state === 0) this.state = 0x9e3779b9;
   }
@@ -151,45 +151,122 @@ export function validateMap(nodes, edges) {
       && isConnected(city)
       && isConnected(country)
       && Object.values(edges).some(e => e.isRiverCrossing)
+      && hasContinuousRiverBoundary(nodes, edges)
       && [1,2,3,4,5,6].every(n => nums.get(n) === 6),
     cityCount: city.length,
     countrysideCount: country.length,
     riverEdgeCount: Object.values(edges).filter(e => e.isRiverCrossing).length,
+    riverBoundaryContinuous: hasContinuousRiverBoundary(nodes, edges),
     diceCounts: Object.fromEntries(nums),
   };
 }
 
-function boundaryColForRow(row) {
-  // A continuous diagonal river boundary from upper-left to lower-right.
-  // City nodes are below/left of the river, countryside nodes are above/right.
-  return 6 - row;
+function riverBoundarySegment(nodes, edge) {
+  const a = nodes[edge.nodeA];
+  const b = nodes[edge.nodeB];
+  if (!a || !b) return null;
+  if (a.row !== b.row) {
+    const x = (a.row + b.row) / 2;
+    const y = a.col;
+    return [[x, y - 0.5], [x, y + 0.5]];
+  }
+  if (a.col !== b.col) {
+    const x = a.row;
+    const y = (a.col + b.col) / 2;
+    return [[x - 0.5, y], [x + 0.5, y]];
+  }
+  return null;
+}
+
+function boundaryPointKey(point) {
+  return `${point[0].toFixed(1)},${point[1].toFixed(1)}`;
+}
+
+function isOuterBoundaryPoint(key) {
+  const [x, y] = key.split(',').map(Number);
+  return x === 0.5 || x === 6.5 || y === 0.5 || y === 6.5;
+}
+
+function hasContinuousRiverBoundary(nodes, edges) {
+  const riverEdges = Object.values(edges).filter(e => e.isRiverCrossing);
+  if (!riverEdges.length) return false;
+
+  const adjacency = new Map();
+  const add = (a, b) => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set());
+    if (!adjacency.has(b)) adjacency.set(b, new Set());
+    adjacency.get(a).add(b);
+    adjacency.get(b).add(a);
+  };
+
+  for (const edge of riverEdges) {
+    const segment = riverBoundarySegment(nodes, edge);
+    if (!segment) return false;
+    add(boundaryPointKey(segment[0]), boundaryPointKey(segment[1]));
+  }
+
+  const keys = [...adjacency.keys()];
+  if (!keys.length) return false;
+  const queue = [keys[0]];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const current = queue.shift();
+    for (const next of adjacency.get(current)) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  if (seen.size !== keys.length) return false;
+
+  const endpoints = keys.filter(key => adjacency.get(key).size === 1);
+  return endpoints.length === 2
+    && endpoints.every(isOuterBoundaryPoint)
+    && keys.every(key => adjacency.get(key).size === 1 || adjacency.get(key).size === 2);
 }
 
 export function generateMap(random) {
-  const nodes = createNodes();
-  const allIds = Object.keys(nodes);
-  for (const id of allIds) {
-    const { row, col } = nodes[id];
-    nodes[id].region = col <= boundaryColForRow(row) ? REGION.CITY : REGION.COUNTRYSIDE;
+  for (let attempt = 0; attempt < 5000; attempt++) {
+    const nodes = createNodes();
+    const allIds = Object.keys(nodes);
+    const citySize = random.int(10, 26);
+    const city = new Set(['r1c1']);
+
+    while (city.size < citySize) {
+      const frontier = [];
+      for (const id of city) {
+        for (const nb of neighborsOf(id)) {
+          if (!city.has(nb) && nb !== 'r6c6') frontier.push(nb);
+        }
+      }
+      if (!frontier.length) break;
+      city.add(random.choice(frontier));
+    }
+    if (city.size !== citySize || city.has('r6c6')) continue;
+
+    for (const id of allIds) nodes[id].region = city.has(id) ? REGION.CITY : REGION.COUNTRYSIDE;
+    const cityIds = allIds.filter(id => nodes[id].region === REGION.CITY);
+    const countryIds = allIds.filter(id => nodes[id].region === REGION.COUNTRYSIDE);
+    if (!isConnected(cityIds) || !isConnected(countryIds)) continue;
+
+    const edges = createEdges(nodes);
+    for (const e of Object.values(edges)) {
+      e.isRiverCrossing = nodes[e.nodeA].region !== nodes[e.nodeB].region;
+    }
+    if (!hasContinuousRiverBoundary(nodes, edges)) continue;
+
+    const numbers = [];
+    for (let n = 1; n <= 6; n++) for (let i = 0; i < 6; i++) numbers.push(n);
+    const shuffled = random.shuffle(numbers);
+    allIds.forEach((id, i) => { nodes[id].diceNumber = shuffled[i]; });
+    return { nodes, edges };
   }
-
-  const edges = createEdges(nodes);
-  for (const e of Object.values(edges)) {
-    e.isRiverCrossing = nodes[e.nodeA].region !== nodes[e.nodeB].region;
-  }
-
-  const numbers = [];
-  for (let n = 1; n <= 6; n++) for (let i = 0; i < 6; i++) numbers.push(n);
-  const shuffled = random.shuffle(numbers);
-  allIds.forEach((id, i) => { nodes[id].diceNumber = shuffled[i]; });
-
-  const validation = validateMap(nodes, edges);
-  if (!validation.ok) throw new Error(`Invalid fixed river map: ${JSON.stringify(validation)}`);
-  return { nodes, edges };
+  throw new Error('Map generation failed: unable to create a legal random river map within the attempt limit');
 }
 
 export class GameEngine {
-  constructor({ players, seed = Date.now() }) {
+  constructor({ players, seed = `${Date.now()}-${Math.random().toString(36).slice(2)}` }) {
     if (!players || players.length < 2 || players.length > 4) throw new Error('玩家数量必须为 2~4');
     this.random = new RandomService(seed);
     const { nodes, edges } = generateMap(this.random);

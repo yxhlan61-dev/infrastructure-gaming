@@ -2,13 +2,21 @@
 import { GameEngine, validateMap, edgeId, CARD } from '../src/game.js';
 
 function testMapGeneration() {
+  const riverSignatures = new Set();
+  const regionSignatures = new Set();
   for (let i = 0; i < 100; i++) {
     const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: `map-${i}` });
     const result = validateMap(game.state.nodes, game.state.edges);
-    assert.equal(result.ok, true, `地图应合法：${JSON.stringify(result)}`);
+    assert.equal(result.ok, true, `map should be legal: ${JSON.stringify(result)}`);
+    assert.equal(result.riverBoundaryContinuous, true, 'river crossings should form one continuous boundary entering and exiting the board');
+    riverSignatures.add(Object.values(game.state.edges).filter(e => e.isRiverCrossing).map(e => e.id).sort().join('|'));
+    regionSignatures.add(Object.values(game.state.nodes).filter(n => n.region === 'CITY').map(n => n.id).sort().join('|'));
   }
-  console.log('✓ 地图生成合法性测试通过');
+  assert.ok(riverSignatures.size >= 20, `seeded games should produce varied rivers; got ${riverSignatures.size}`);
+  assert.ok(regionSignatures.size >= 20, `seeded games should produce varied regions; got ${regionSignatures.size}`);
+  console.log('map legality and random variety test passed');
 }
+
 
 function testBuildRules() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'build-rules' });

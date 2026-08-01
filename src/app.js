@@ -26,9 +26,10 @@ let pendingWaitTimer = null;
 let pendingWaitSeq = 0;
 
 const POS = { xMargin: 250, yMargin: 60, step: 100 };
-const LEFT_PANEL = { x: -55, width: 230 };
+const LEFT_PANEL = { x: -115, width: 230 };
 function point(node) {
-  return { x: POS.xMargin + (node.row - 1) * POS.step, y: POS.yMargin + (6 - node.col) * POS.step };
+  // The design document defines row as top-to-bottom and col as left-to-right.
+  return { x: POS.xMargin + (node.col - 1) * POS.step, y: POS.yMargin + (node.row - 1) * POS.step };
 }
 function mapBounds() {
   return {
@@ -255,8 +256,197 @@ function renderMerchantOverlay(nodes, currentMerchant) {
   svg.appendChild(svgText(routeLabel('r6c6', 'r1c1'), { x: boxCx, y: 351, class: 'final-route-text' }));
 }
 
+function logicalToSvg(p) {
+  return {
+    x: POS.xMargin + (p.x - 1) * POS.step,
+    y: POS.yMargin + (p.y - 1) * POS.step,
+  };
+}
+
+function riverBoundarySegment(nodes, edge) {
+  const a = nodes[edge.nodeA];
+  const b = nodes[edge.nodeB];
+  if (!a || !b) return null;
+  if (a.row === b.row) {
+    const x = (a.col + b.col) / 2;
+    return [logicalToSvg({ x, y: a.row - 0.5 }), logicalToSvg({ x, y: a.row + 0.5 })];
+  }
+  if (a.col === b.col) {
+    const y = (a.row + b.row) / 2;
+    return [logicalToSvg({ x: a.col - 0.5, y }), logicalToSvg({ x: a.col + 0.5, y })];
+  }
+  return null;
+}
+
+function pointKey(p) {
+  return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+}
+
+function parsePointKey(key) {
+  const [x, y] = key.split(',').map(Number);
+  return { x, y };
+}
+
+function orderedRiverPoints(nodes, edges) {
+  const adjacency = new Map();
+  const points = new Map();
+  const addPoint = p => {
+    const key = pointKey(p);
+    if (!adjacency.has(key)) adjacency.set(key, new Set());
+    points.set(key, p);
+    return key;
+  };
+  const addSegment = (a, b) => {
+    const ak = addPoint(a);
+    const bk = addPoint(b);
+    adjacency.get(ak).add(bk);
+    adjacency.get(bk).add(ak);
+  };
+
+  for (const edge of Object.values(edges).filter(e => e.isRiverCrossing)) {
+    const segment = riverBoundarySegment(nodes, edge);
+    if (segment) addSegment(segment[0], segment[1]);
+  }
+
+  if (!adjacency.size) return [];
+  const b = mapBounds();
+  const isBoundary = key => {
+    const p = points.get(key) || parsePointKey(key);
+    return Math.abs(p.x - b.left) < 0.1
+      || Math.abs(p.x - b.right) < 0.1
+      || Math.abs(p.y - b.top) < 0.1
+      || Math.abs(p.y - b.bottom) < 0.1;
+  };
+  const endpoints = [...adjacency.keys()].filter(key => adjacency.get(key).size === 1 && isBoundary(key));
+  const startKey = endpoints[0] || [...adjacency.keys()].find(key => adjacency.get(key).size === 1) || [...adjacency.keys()][0];
+  const ordered = [];
+  let previous = null;
+  let current = startKey;
+  const usedEdges = new Set();
+  while (current) {
+    ordered.push(points.get(current) || parsePointKey(current));
+    const next = [...adjacency.get(current)].find(key => key !== previous && !usedEdges.has([current, key].sort().join('|')));
+    if (!next) break;
+    usedEdges.add([current, next].sort().join('|'));
+    previous = current;
+    current = next;
+  }
+  return ordered;
+}
+
+function sameDirection(a, b, c) {
+  const dx1 = Math.sign(b.x - a.x);
+  const dy1 = Math.sign(b.y - a.y);
+  const dx2 = Math.sign(c.x - b.x);
+  const dy2 = Math.sign(c.y - b.y);
+  return dx1 === dx2 && dy1 === dy2;
+}
+
+function pathFromPoints(points, radius = 22) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const current = points[i];
+    const next = points[i + 1];
+    if (sameDirection(prev, current, next)) {
+      d += ` L ${current.x.toFixed(1)} ${current.y.toFixed(1)}`;
+      continue;
+    }
+    const inLen = Math.hypot(current.x - prev.x, current.y - prev.y) || 1;
+    const outLen = Math.hypot(next.x - current.x, next.y - current.y) || 1;
+    const cornerRadius = Math.min(radius, inLen / 2, outLen / 2);
+    const before = {
+      x: current.x - (current.x - prev.x) / inLen * cornerRadius,
+      y: current.y - (current.y - prev.y) / inLen * cornerRadius,
+    };
+    const after = {
+      x: current.x + (next.x - current.x) / outLen * cornerRadius,
+      y: current.y + (next.y - current.y) / outLen * cornerRadius,
+    };
+    d += ` L ${before.x.toFixed(1)} ${before.y.toFixed(1)}`;
+    d += ` Q ${current.x.toFixed(1)} ${current.y.toFixed(1)}, ${after.x.toFixed(1)} ${after.y.toFixed(1)}`;
+  }
+  const last = points[points.length - 1];
+  d += ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+  return d;
+}
+
+function perimeterClockwisePosition(p, b) {
+  const w = b.right - b.left;
+  const h = b.bottom - b.top;
+  if (Math.abs(p.y - b.top) < 0.1) return p.x - b.left;
+  if (Math.abs(p.x - b.right) < 0.1) return w + (p.y - b.top);
+  if (Math.abs(p.y - b.bottom) < 0.1) return w + h + (b.right - p.x);
+  return w + h + w + (b.bottom - p.y);
+}
+
+function pointAtPerimeterPosition(t, b) {
+  const w = b.right - b.left;
+  const h = b.bottom - b.top;
+  const total = 2 * (w + h);
+  const value = ((t % total) + total) % total;
+  if (value <= w) return { x: b.left + value, y: b.top };
+  if (value <= w + h) return { x: b.right, y: b.top + value - w };
+  if (value <= w + h + w) return { x: b.right - (value - w - h), y: b.bottom };
+  return { x: b.left, y: b.bottom - (value - w - h - w) };
+}
+
+function perimeterPointsClockwise(from, to, b) {
+  const w = b.right - b.left;
+  const h = b.bottom - b.top;
+  const total = 2 * (w + h);
+  let start = perimeterClockwisePosition(from, b);
+  let end = perimeterClockwisePosition(to, b);
+  if (end <= start) end += total;
+  const corners = [w, w + h, w + h + w, total, total + w, total + w + h, total + w + h + w];
+  const result = [];
+  for (const c of corners) {
+    if (c > start + 0.1 && c < end - 0.1) result.push(pointAtPerimeterPosition(c, b));
+  }
+  result.push(to);
+  return result;
+}
+
+function perimeterPointsCounterClockwise(from, to, b) {
+  const reverse = [from, ...perimeterPointsClockwise(to, from, b)].reverse();
+  return reverse.slice(1);
+}
+
+function pointInPolygon(target, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const intersects = ((a.y > target.y) !== (b.y > target.y))
+      && (target.x < (b.x - a.x) * (target.y - a.y) / ((b.y - a.y) || 1e-9) + a.x);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function drawCellRegionFallback(nodes) {
+  for (const n of Object.values(nodes)) {
+    const p = point(n);
+    svg.appendChild(el('rect', {
+      x: p.x - POS.step / 2,
+      y: p.y - POS.step / 2,
+      width: POS.step,
+      height: POS.step,
+      class: `region-bg ${n.region === 'CITY' ? 'region-bg-city' : 'region-bg-country'}`,
+    }));
+  }
+}
+
 function drawRegionBackground(nodes, edges) {
   const b = mapBounds();
+  const riverPoints = orderedRiverPoints(nodes, edges);
+  if (riverPoints.length < 2) {
+    drawCellRegionFallback(nodes);
+    return;
+  }
+
   svg.appendChild(el('rect', {
     x: b.left,
     y: b.top,
@@ -265,87 +455,22 @@ function drawRegionBackground(nodes, edges) {
     class: 'region-bg region-bg-country',
   }));
 
-  const riverPoints = riverCurvePoints(nodes, edges);
-  if (riverPoints.length < 2) return;
-  const d = `${catmullRomPath(riverPoints)} L ${b.right.toFixed(1)} ${b.bottom.toFixed(1)} L ${b.left.toFixed(1)} ${b.bottom.toFixed(1)} Z`;
+  const start = riverPoints[0];
+  const end = riverPoints[riverPoints.length - 1];
+  const cwClose = perimeterPointsClockwise(end, start, b);
+  const ccwClose = perimeterPointsCounterClockwise(end, start, b);
+  const cwPolygon = [...riverPoints, ...cwClose];
+  const ccwPolygon = [...riverPoints, ...ccwClose];
+  const cityProbe = point(nodes.r1c1 || Object.values(nodes).find(n => n.region === 'CITY'));
+  const closePoints = pointInPolygon(cityProbe, cwPolygon) ? cwClose : ccwClose;
+  const d = `${pathFromPoints(riverPoints)} ${closePoints.map(p => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} Z`;
   svg.appendChild(el('path', { d, class: 'region-bg region-bg-city' }));
 }
 
-function catmullRomPath(points) {
-  if (!points.length) return '';
-  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
-  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(points.length - 1, i + 2)];
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
-  }
-  return d;
-}
-
-function intersectRayWithBounds(point, direction, bounds) {
-  const candidates = [];
-  const addCandidate = (t, x, y) => {
-    if (t > 0 && x >= bounds.left - 0.01 && x <= bounds.right + 0.01 && y >= bounds.top - 0.01 && y <= bounds.bottom + 0.01) {
-      candidates.push({ t, x, y });
-    }
-  };
-  if (direction.x !== 0) {
-    let t = (bounds.left - point.x) / direction.x;
-    addCandidate(t, bounds.left, point.y + direction.y * t);
-    t = (bounds.right - point.x) / direction.x;
-    addCandidate(t, bounds.right, point.y + direction.y * t);
-  }
-  if (direction.y !== 0) {
-    let t = (bounds.top - point.y) / direction.y;
-    addCandidate(t, point.x + direction.x * t, bounds.top);
-    t = (bounds.bottom - point.y) / direction.y;
-    addCandidate(t, point.x + direction.x * t, bounds.bottom);
-  }
-  candidates.sort((a, b) => a.t - b.t);
-  return candidates[0] || point;
-}
-
-function riverCurvePoints(nodes, edges) {
-  const seen = new Set();
-  const points = Object.values(edges)
-    .filter(e => e.isRiverCrossing)
-    .map(e => {
-      const a = point(nodes[e.nodeA]);
-      const b = point(nodes[e.nodeB]);
-      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    })
-    .sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x || a.y - b.y)
-    .filter(p => {
-      const key = `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-  if (points.length > 1) {
-    const bounds = mapBounds();
-    const first = points[0];
-    const second = points[1];
-    const last = points[points.length - 1];
-    const prev = points[points.length - 2];
-    const before = intersectRayWithBounds(first, { x: first.x - second.x, y: first.y - second.y }, bounds);
-    const after = intersectRayWithBounds(last, { x: last.x - prev.x, y: last.y - prev.y }, bounds);
-    return [before, ...points, after];
-  }
-  return points;
-}
-
 function drawRiverCurve(nodes, edges) {
-  const points = riverCurvePoints(nodes, edges);
+  const points = orderedRiverPoints(nodes, edges);
   if (points.length < 2) return;
-  const d = catmullRomPath(points);
+  const d = pathFromPoints(points);
   svg.appendChild(el('path', { d, class: 'river-curve-bank' }));
   svg.appendChild(el('path', { d, class: 'river-curve' }));
 }
