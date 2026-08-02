@@ -6,6 +6,7 @@ import {
   cardName,
   regionName,
   merchantName,
+  MERCHANT_COUNT,
 } from './game.js';
 import { CARD_CATALOG, RULE_SECTIONS } from './catalog.js';
 
@@ -993,7 +994,7 @@ function legacyFinishTurn() {
     ? engine.state.completedMerchants.at(-1)
     : null;
   const gameEnded = engine.state.phase === PHASE.GAME_END;
-  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.type === 'BIG' && previousMerchantIndex !== engine.state.currentMerchant?.index;
 
   if (completedMerchant) {
     startMerchantCompletionAnimation(completedMerchant, () => {
@@ -1573,7 +1574,7 @@ function onlineTurnFinishedAnnouncement(previousCompletedCount, previousMerchant
     ? engine.state.completedMerchants.at(-1)
     : null;
   const gameEnded = engine.state.phase === PHASE.GAME_END;
-  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.type === 'BIG' && previousMerchantIndex !== engine.state.currentMerchant?.index;
   return { completedMerchant, gameEnded, shouldAnnounceBigMerchant };
 }
 
@@ -1638,7 +1639,7 @@ function renderActions() {
   const room = online?.room;
   if (s.phase === PHASE.GAME_END) {
     const rows = s.result?.rankings?.map((p, i) => `<div class="player-row"><b>#${i + 1} ${htmlEscape(p.name)}</b><span>${p.tollMoney}$ · 路 ${p.roads} · 桥 ${p.bridges}</span></div>`).join('') || '';
-    actionPanel.innerHTML = `<p>五位商人已完成交易。</p>${rows}`;
+    actionPanel.innerHTML = `<p>${MERCHANT_COUNT} 位商人已完成交易。</p>${rows}`;
     return;
   }
   if (isOnline() && !isOnlineActionTurn()) {
@@ -1926,7 +1927,7 @@ async function finishTurn() {
   engine.finishActionAndAdvance();
   const completedMerchant = engine.state.completedMerchants.length > completedCount ? engine.state.completedMerchants.at(-1) : null;
   const gameEnded = engine.state.phase === PHASE.GAME_END;
-  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.type === 'BIG' && previousMerchantIndex !== engine.state.currentMerchant?.index;
   if (completedMerchant) {
     startMerchantCompletionAnimation(completedMerchant, () => {
       uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };

@@ -1,5 +1,5 @@
 ﻿import assert from 'node:assert/strict';
-import { GameEngine, validateMap, edgeId, CARD } from '../src/game.js';
+import { GameEngine, validateMap, edgeId, CARD, MERCHANT_COUNT, PHASE } from '../src/game.js';
 
 function testMapGeneration() {
   const riverSignatures = new Set();
@@ -101,7 +101,7 @@ function testFirstQuadrantCoordinateLabels() {
 
 function testMerchantLogCoordinates() {
   const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'merchant-log-coordinates' });
-  game.spawnMerchant(5);
+  game.spawnMerchant(MERCHANT_COUNT);
   const spawnLog = game.state.log[0];
   assert.match(spawnLog.message, /\(6,6\) \u2192 \(1,1\)/, 'merchant spawn log must use first-quadrant coordinates');
   assert.doesNotMatch(spawnLog.message, /r6c6|r1c1/, 'merchant spawn log must not expose internal node IDs');
@@ -111,6 +111,7 @@ function testMerchantLogCoordinates() {
     if (edge.isRiverCrossing) edge.bridgeOwnerId = 'P1';
   }
   assert.equal(game.checkMerchantCompletion(), true, 'fully connected map should complete the merchant route');
+  assert.equal(game.state.phase, PHASE.GAME_END, 'the sixth merchant should end the game');
   const completionLog = game.state.log.find(entry => entry.type === 'MERCHANT_COMPLETED');
   assert.match(completionLog.message, /\(6,6\) \u2192 \(1,1\)/, 'merchant completion log must use first-quadrant coordinates');
   assert.doesNotMatch(completionLog.message, /r6c6|r1c1/, 'merchant completion log must not expose internal node IDs');
@@ -124,22 +125,33 @@ function testMerchantLogCoordinates() {
   console.log('merchant log coordinate formatting test passed');
 }
 
-function testFourthMerchantRoutesAreRandom() {
-  const routes = new Set();
+function assertCrossRegionMerchant(game, index, label) {
+  const merchant = game.state.currentMerchant;
+  assert.equal(merchant.index, index, `${label} should keep its sequence number`);
+  assert.equal(merchant.type, index <= 3 ? 'SMALL' : 'BIG', `${label} should have the correct type`);
+  assert.notEqual(
+    game.state.nodes[merchant.startNodeId].region,
+    game.state.nodes[merchant.endNodeId].region,
+    `${label} must connect city and countryside`,
+  );
+}
+
+function testBigMerchantRoutesAreRandom() {
+  const routes4 = new Set();
+  const routes5 = new Set();
   for (let i = 0; i < 60; i++) {
-    const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: `merchant-four-${i}` });
+    const game = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: `merchant-big-${i}` });
     game.spawnMerchant(4);
-    const merchant = game.state.currentMerchant;
-    assert.equal(merchant.type, 'BIG', 'the fourth merchant should be a randomly routed big merchant');
-    assert.notEqual(
-      game.state.nodes[merchant.startNodeId].region,
-      game.state.nodes[merchant.endNodeId].region,
-      'the fourth merchant must still connect city and countryside',
-    );
-    routes.add(`${merchant.startNodeId}>${merchant.endNodeId}`);
+    assertCrossRegionMerchant(game, 4, 'the fourth merchant');
+    routes4.add(`${game.state.currentMerchant.startNodeId}>${game.state.currentMerchant.endNodeId}`);
+
+    game.spawnMerchant(5);
+    assertCrossRegionMerchant(game, 5, 'the fifth merchant');
+    routes5.add(`${game.state.currentMerchant.startNodeId}>${game.state.currentMerchant.endNodeId}`);
   }
-  assert.ok(routes.size >= 10, `fourth merchant routes should vary by random seed; got ${routes.size}`);
-  console.log('fourth merchant random route test passed');
+  assert.ok(routes4.size >= 10, `fourth merchant routes should vary by random seed; got ${routes4.size}`);
+  assert.ok(routes5.size >= 10, `fifth merchant routes should vary by random seed; got ${routes5.size}`);
+  console.log('fourth and fifth big merchant random route test passed');
 }
 
 function testSubsidyAndMerchantTypes() {
@@ -148,19 +160,58 @@ function testSubsidyAndMerchantTypes() {
   const before = game.state.players[playerId].tollMoney;
   const res = game.resolveCard(CARD.SUBSIDY);
   assert.equal(res.done, true, 'subsidy should resolve immediately');
-  assert.equal(game.state.players[playerId].tollMoney, before + 2, 'subsidy should add 2 dollars');
+  assert.equal(game.state.players[playerId].tollMoney, before + 3, 'subsidy should add 3 dollars');
 
-  game.spawnMerchant(4);
-  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 4 should be a randomly generated big merchant');
-  const startRegion = game.state.nodes[game.state.currentMerchant.startNodeId].region;
-  const endRegion = game.state.nodes[game.state.currentMerchant.endNodeId].region;
-  assert.notEqual(startRegion, endRegion, 'merchant 4 random route should connect city and countryside');
+  for (const index of [1, 2, 3]) {
+    game.spawnMerchant(index);
+    assertCrossRegionMerchant(game, index, `merchant ${index}`);
+  }
 
-  game.spawnMerchant(5);
-  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 5 should be the big merchant');
-  assert.equal(game.state.currentMerchant.startNodeId, 'r6c6', 'merchant 5 should use the fixed upper-right start');
-  assert.equal(game.state.currentMerchant.endNodeId, 'r1c1', 'merchant 5 should use the fixed lower-left end');
+  for (const index of [4, 5]) {
+    game.spawnMerchant(index);
+    assertCrossRegionMerchant(game, index, `merchant ${index}`);
+  }
+
+  game.spawnMerchant(MERCHANT_COUNT);
+  assert.equal(game.state.currentMerchant.type, 'BIG', 'merchant 6 should be the final big merchant');
+  assert.equal(game.state.currentMerchant.startNodeId, 'r6c6', 'merchant 6 should use the fixed upper-right start');
+  assert.equal(game.state.currentMerchant.endNodeId, 'r1c1', 'merchant 6 should use the fixed lower-left end');
   console.log('subsidy and merchant type test passed');
+}
+
+function testRandomRoadCardBuildsEveryLegalSelection() {
+  const mixedGame = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'random-road-mixed' });
+  const allEdges = Object.values(mixedGame.state.edges);
+  assert.equal(allEdges.length, 60, 'the random road card should draw from all 60 edges');
+  const legal = allEdges.find(edge => !edge.isRiverCrossing && edge.roadOwnerId === null);
+  const rejected = allEdges.find(edge => edge.id !== legal.id && edge.roadOwnerId === null);
+  assert.ok(legal && rejected, 'the test needs two free edges');
+  rejected.roadOwnerId = 'P2';
+  let sampledItems;
+  let sampledCount;
+  mixedGame.random.sample = (items, count) => {
+    sampledItems = items;
+    sampledCount = count;
+    return [legal, rejected];
+  };
+  const mixedResult = mixedGame.resolveCard(CARD.RANDOM_ROAD);
+  assert.equal(sampledItems.length, 60, 'random road card should pass all 60 edges to sample');
+  assert.deepEqual(new Set(sampledItems.map(edge => edge.id)), new Set(allEdges.map(edge => edge.id)), 'sample input should contain every map edge');
+  assert.equal(sampledCount, 2, 'random road card should sample two edges');
+  assert.equal(new Set(mixedResult.selectedEdgeIds).size, 2, 'selected edge IDs must be different');
+  assert.deepEqual(mixedResult.builtEdgeIds, [legal.id], 'every legal selected edge should be built');
+  assert.deepEqual(mixedResult.rejectedEdgeIds, [rejected.id], 'every illegal selected edge should be rejected');
+  assert.equal(legal.roadOwnerId, 'P1', 'the legal edge should be built for the current player');
+  assert.equal(rejected.roadOwnerId, 'P2', 'the illegal edge must not be overwritten');
+
+  const doubleGame = new GameEngine({ players: [{ name: 'A' }, { name: 'B' }], seed: 'random-road-double' });
+  const legalEdges = Object.values(doubleGame.state.edges).filter(edge => !edge.isRiverCrossing && edge.roadOwnerId === null).slice(0, 2);
+  assert.equal(legalEdges.length, 2, 'the test needs two legal edges');
+  doubleGame.random.sample = () => legalEdges;
+  const doubleResult = doubleGame.resolveCard(CARD.RANDOM_ROAD);
+  assert.deepEqual(doubleResult.builtEdgeIds, legalEdges.map(edge => edge.id), 'both legal selected edges should be built');
+  assert.ok(legalEdges.every(edge => edge.roadOwnerId === 'P1'), 'both selected legal edges should belong to the current player');
+  console.log('random road card two-edge resolution test passed');
 }
 
 function testUniformShortestPathDP() {
@@ -207,7 +258,8 @@ testBuildableBasesForDie1();
 testSecondDieFiltersOccupiedTargets();
 testFirstQuadrantCoordinateLabels();
 testMerchantLogCoordinates();
-testFourthMerchantRoutesAreRandom();
+testBigMerchantRoutesAreRandom();
 testSubsidyAndMerchantTypes();
+testRandomRoadCardBuildsEveryLegalSelection();
 testUniformShortestPathDP();
 console.log('全部测试通过');

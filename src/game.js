@@ -6,6 +6,8 @@ export const CARD = {
   REMOVE_ROAD_BUILD_BRIDGE: 'REMOVE_ROAD_BUILD_BRIDGE',
   SUBSIDY: 'SUBSIDY',
 };
+export const MERCHANT_COUNT = 6;
+export const FINAL_MERCHANT_INDEX = MERCHANT_COUNT;
 export const PHASE = {
   PRE_BUILD: 'PRE_BUILD',
   PLAYER_TURN: 'PLAYER_TURN',
@@ -51,6 +53,11 @@ export class RandomService {
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
+  }
+
+  sample(items, count) {
+    const size = Math.max(0, Math.min(Number(count) || 0, items.length));
+    return this.shuffle(items).slice(0, size);
   }
 
   weightedChoice(items) {
@@ -525,26 +532,47 @@ export class GameEngine {
   resolveCard(card, options = {}) {
     const playerId = this.currentPlayerId;
     if (card === CARD.SUBSIDY) {
-      this.state.players[playerId].tollMoney += 2;
-      const announcement = `资金补贴卡：${this.state.players[playerId].name}获得 2$`;
+      this.state.players[playerId].tollMoney += 3;
+      const announcement = `资金补贴卡：${this.state.players[playerId].name}获得 3$`;
       this.log('CARD_RESOLVED', announcement, { card });
       return { done: true, announcement };
     }
 
     if (card === CARD.RANDOM_ROAD) {
-      const edge = this.random.choice(Object.values(this.state.edges));
+      const selectedEdges = this.random.sample(Object.values(this.state.edges), 2);
       this.syncRandomState();
-      const edgeLabel = this.formatEdgeCoord(edge);
-      let announcement;
-      if (edge && this.canBuildRoad(playerId, edge)) {
-        this.buildRoad(playerId, edge.id);
-        announcement = `随机修路卡生效：修建 ${edgeLabel}`;
-        this.log('CARD_RESOLVED', announcement, { card, edgeId: edge.id, edgeLabel });
-      } else {
-        announcement = `随机修路卡抽中 ${edgeLabel}，不符合修路条件，无效果`;
-        this.log('CARD_RESOLVED', announcement, { card, edgeId: edge?.id, edgeLabel });
+      const builtEdges = [];
+      const rejectedEdges = [];
+
+      for (const edge of selectedEdges) {
+        if (this.canBuildRoad(playerId, edge)) {
+          this.buildRoad(playerId, edge.id);
+          builtEdges.push(edge);
+        } else {
+          rejectedEdges.push(edge);
+        }
       }
-      return { done: true, announcement };
+
+      const selectedLabels = selectedEdges.map(edge => this.formatEdgeCoord(edge));
+      const builtLabels = builtEdges.map(edge => this.formatEdgeCoord(edge));
+      const rejectedLabels = rejectedEdges.map(edge => this.formatEdgeCoord(edge));
+      const announcementParts = [`随机修路卡抽中两条不同的边：${selectedLabels.join('、')}`];
+      if (builtLabels.length) announcementParts.push(`符合条件的边已修建：${builtLabels.join('、')}`);
+      if (rejectedLabels.length) announcementParts.push(`不符合条件的边：${rejectedLabels.join('、')}`);
+      const announcement = announcementParts.join('；');
+      this.log('CARD_RESOLVED', announcement, {
+        card,
+        selectedEdgeIds: selectedEdges.map(edge => edge.id),
+        builtEdgeIds: builtEdges.map(edge => edge.id),
+        rejectedEdgeIds: rejectedEdges.map(edge => edge.id),
+      });
+      return {
+        done: true,
+        announcement,
+        selectedEdgeIds: selectedEdges.map(edge => edge.id),
+        builtEdgeIds: builtEdges.map(edge => edge.id),
+        rejectedEdgeIds: rejectedEdges.map(edge => edge.id),
+      };
     }
 
     if (card === CARD.BRIDGE_TO_ROAD) {
@@ -599,7 +627,7 @@ export class GameEngine {
 
   spawnMerchant(index) {
     let merchant;
-    if (index === 5) {
+    if (index === FINAL_MERCHANT_INDEX) {
       merchant = { index, type: 'BIG', startNodeId: 'r6c6', endNodeId: 'r1c1', completed: false };
     } else {
       const city = Object.values(this.state.nodes).filter(n => n.region === REGION.CITY).map(n => n.id);
@@ -608,7 +636,7 @@ export class GameEngine {
       this.syncRandomState();
       merchant = {
         index,
-        type: index === 4 ? 'BIG' : 'SMALL',
+        type: index >= 4 ? 'BIG' : 'SMALL',
         startNodeId: cityToCountry ? this.random.choice(city) : this.random.choice(country),
         endNodeId: cityToCountry ? this.random.choice(country) : this.random.choice(city),
         completed: false,
@@ -727,7 +755,7 @@ export class GameEngine {
     this.state.lastMerchantPath = path.edgeIds;
     this.log('MERCHANT_COMPLETED', `${merchantName(merchant)} \u5b8c\u6210\u4ea4\u6613\uff1a${this.formatNodeCoord(merchant.startNodeId)} \u2192 ${this.formatNodeCoord(merchant.endNodeId)}\uff0c\u6700\u77ed\u957f\u5ea6 ${path.length}\uff0c\u7b49\u6982\u7387\u5019\u9009\u8def\u5f84 ${path.pathCount} \u6761`, { merchant, path, tollDetails });
 
-    if (merchant.index === 5) {
+    if (merchant.index === FINAL_MERCHANT_INDEX) {
       this.endGame();
     } else {
       this.spawnMerchant(merchant.index + 1);
