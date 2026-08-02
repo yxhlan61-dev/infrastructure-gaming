@@ -290,6 +290,7 @@ export class GameEngine {
       completedMerchants: [],
       turnNumber: 0,
       randomSeed: seed,
+      randomState: this.random.state,
       lastDie1: null,
       lastDie2: null,
       lastMerchantPath: [],
@@ -303,6 +304,29 @@ export class GameEngine {
 
   get currentPlayerId() { return this.state.playerOrder[this.state.currentPlayerIndex]; }
   get preBuildPlayerId() { return this.state.playerOrder[this.state.preBuildIndex]; }
+
+  syncRandomState() {
+    if (this.state) this.state.randomState = this.random.state >>> 0;
+  }
+
+  /**
+   * Restore an engine from a server/client snapshot without regenerating the map.
+   * The random generator state is part of the public snapshot so online actions
+   * continue from the same deterministic sequence after reconnects.
+   */
+  static fromState(snapshot) {
+    if (!snapshot || !snapshot.nodes || !snapshot.edges || !snapshot.players) {
+      throw new Error('\u65e0\u6548\u7684\u6e38\u620f\u5feb\u7167');
+    }
+    const engine = Object.create(GameEngine.prototype);
+    engine.state = JSON.parse(JSON.stringify(snapshot));
+    engine.random = new RandomService(engine.state.randomSeed || 'restored-game');
+    if (Number.isInteger(engine.state.randomState)) {
+      engine.random.state = engine.state.randomState >>> 0;
+    }
+    engine.state.randomState = engine.random.state >>> 0;
+    return engine;
+  }
 
   log(type, message, payload = undefined) {
     this.state.log.unshift({
@@ -410,6 +434,7 @@ export class GameEngine {
     if (this.state.lastDie1 !== null) return this.state.lastDie1;
     this.state.lastMerchantPath = [];
     this.state.lastDie1 = this.random.rollDie();
+    this.syncRandomState();
     this.state.lastDie2 = null;
     this.state.diceAnimationNonce = (this.state.diceAnimationNonce || 0) + 1;
     this.log('DICE_ROLLED', `${this.state.players[this.currentPlayerId].name} 掷出第一骰：${this.state.lastDie1}`, { die: this.state.lastDie1 });
@@ -455,6 +480,7 @@ export class GameEngine {
     const base = this.getNode(baseNodeId);
     if (!base || base.diceNumber !== this.state.lastDie1) throw new Error('基地点数必须等于第一骰');
     this.state.lastDie2 = this.random.rollDie();
+    this.syncRandomState();
     this.state.diceAnimationNonce = (this.state.diceAnimationNonce || 0) + 1;
     const candidates = this.getBuildableSecondDieTargets(this.currentPlayerId, baseNodeId, this.state.lastDie2);
     this.log('DICE_ROLLED', `${this.state.players[this.currentPlayerId].name} 选择基地 ${baseNodeId}，掷出第二骰：${this.state.lastDie2}`, { baseNodeId, die: this.state.lastDie2, candidates });
@@ -491,6 +517,7 @@ export class GameEngine {
       { value: CARD.REMOVE_ROAD_BUILD_BRIDGE, weight: 1 },
       { value: CARD.SUBSIDY, weight: 1 },
     ]);
+    this.syncRandomState();
     this.log('CARD_DRAWN', `${this.state.players[this.currentPlayerId].name} 抽到建设卡：${cardName(card)}`, { card });
     return card;
   }
@@ -506,6 +533,7 @@ export class GameEngine {
 
     if (card === CARD.RANDOM_ROAD) {
       const edge = this.random.choice(Object.values(this.state.edges));
+      this.syncRandomState();
       const edgeLabel = this.formatEdgeCoord(edge);
       let announcement;
       if (edge && this.canBuildRoad(playerId, edge)) {
@@ -577,6 +605,7 @@ export class GameEngine {
       const city = Object.values(this.state.nodes).filter(n => n.region === REGION.CITY).map(n => n.id);
       const country = Object.values(this.state.nodes).filter(n => n.region === REGION.COUNTRYSIDE).map(n => n.id);
       const cityToCountry = this.random.next() < 0.5;
+      this.syncRandomState();
       merchant = {
         index,
         type: index === 4 ? 'BIG' : 'SMALL',
@@ -584,6 +613,7 @@ export class GameEngine {
         endNodeId: cityToCountry ? this.random.choice(country) : this.random.choice(city),
         completed: false,
       };
+      this.syncRandomState();
     }
     this.state.currentMerchant = merchant;
     this.log('MERCHANT_SPAWNED', `${merchantName(merchant)} \u767b\u573a\uff1a${this.formatNodeCoord(merchant.startNodeId)} \u2192 ${this.formatNodeCoord(merchant.endNodeId)}`, merchant);
@@ -656,6 +686,7 @@ export class GameEngine {
         .filter(({ nodeId: nb }) => dist[nb] === dist[current] + 1 && count[nb] > 0)
         .map(({ nodeId: nb, edge }) => ({ value: { nodeId: nb, edge }, weight: count[nb] }));
       const chosen = this.random.weightedChoice(weightedNext);
+      this.syncRandomState();
       if (!chosen) return null;
       pathNodeIds.push(chosen.nodeId);
       pathEdgeIds.push(chosen.edge.id);

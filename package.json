@@ -1,10 +1,10 @@
-﻿{
+{
   "name": "infrastration-gaming",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/game.test.js",
-    "serve": "python -m http.server 5173"
+    "test": "node tests/game.test.js && node tests/server.test.js",
+    "serve": "node server.js"
   }
 }

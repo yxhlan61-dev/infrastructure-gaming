@@ -1,11 +1,13 @@
-﻿import {
+import {
   GameEngine,
+  CARD,
   PHASE,
   edgeId,
   cardName,
   regionName,
   merchantName,
 } from './game.js';
+import { CARD_CATALOG, RULE_SECTIONS } from './catalog.js';
 
 const svg = document.getElementById('gameBoard');
 const setupPanel = document.getElementById('setupPanel');
@@ -19,6 +21,13 @@ const playersPanel = document.getElementById('playersPanel');
 const logPanel = document.getElementById('logPanel');
 const phaseBadge = document.getElementById('phaseBadge');
 const boardHint = document.getElementById('boardHint');
+const localModeBtn = document.getElementById('localModeBtn');
+const onlineModeBtn = document.getElementById('onlineModeBtn');
+const localSetupContent = document.getElementById('localSetupContent');
+const onlineSetupContent = document.getElementById('onlineSetupContent');
+const roomsList = document.getElementById('roomsList');
+const onlineRoomPanel = document.getElementById('onlineRoomPanel');
+const modalRoot = document.getElementById('modalRoot');
 
 let engine = null;
 let uiMode = { type: 'SETUP' };
@@ -26,6 +35,15 @@ let pendingWaitTimer = null;
 let pendingWaitSeq = 0;
 let merchantAnimation = null;
 let merchantAnimationFrame = null;
+let setupMode = 'local';
+let rooms = [];
+let roomsLoading = false;
+let online = loadOnlineSession();
+let onlinePollTimer = null;
+let onlineEventSource = null;
+let onlineReconnectTimer = null;
+let onlineRequestBusy = false;
+let lastOnlineError = '';
 
 const POS = { xMargin: 250, yMargin: 60, step: 100 };
 const LEFT_PANEL = { x: -115, width: 230 };
@@ -296,31 +314,7 @@ function renderPlayerInputs() {
 playerCountInput.addEventListener('change', renderPlayerInputs);
 renderPlayerInputs();
 
-createGameBtn.addEventListener('click', () => {
-  clearPendingWait();
-  cancelMerchantAnimation();
-  const count = Number(playerCountInput.value);
-  const players = [];
-  for (let i = 1; i <= count; i++) {
-    players.push({ name: document.getElementById(`playerName${i}`).value.trim() || `玩家${i}` });
-  }
-  engine = new GameEngine({ players, seed: createRandomSeed() });
-  setupPanel.style.display = 'none';
-  uiMode = { type: 'IDLE' };
-  render();
-});
-
-newGameTopBtn.addEventListener('click', () => {
-  clearPendingWait();
-  cancelMerchantAnimation();
-  document.querySelectorAll('.announcement-backdrop').forEach(n => n.remove());
-  engine = null;
-  uiMode = { type: 'SETUP' };
-  setupPanel.style.display = '';
-  render();
-});
-
-function selectableEdges() {
+function legacySelectableEdges() {
   if (!engine) return new Set();
   const s = engine.state;
   if (s.phase === PHASE.PRE_BUILD) return new Set(engine.getBuildableRoadEdges(engine.preBuildPlayerId).map(e => e.id));
@@ -332,7 +326,7 @@ function selectableEdges() {
   return new Set();
 }
 
-function selectableNodes() {
+function legacySelectableNodes() {
   if (!engine) return new Set();
   if (uiMode.type === 'CHOOSE_ACTION') return new Set(engine.getBuildableBaseNodesForDie1(engine.currentPlayerId));
   if (uiMode.type === 'SELECT_BASE_ROAD') return new Set(engine.getBuildableBaseNodesForDie1(engine.currentPlayerId));
@@ -728,7 +722,7 @@ function renderBoard() {
   renderMerchantTraveller();
 }
 
-function renderStatus() {
+function legacyRenderStatus() {
   if (!engine) {
     phaseBadge.textContent = '未开始';
     statusPanel.innerHTML = '<p class="small">请创建游戏。</p>';
@@ -792,7 +786,7 @@ function renderPlayers() {
   }).join('');
 }
 
-function renderActions() {
+function legacyRenderActions() {
   if (!engine) {
     actionPanel.innerHTML = '<p class="small">创建游戏后显示可用操作。</p>';
     return;
@@ -864,7 +858,7 @@ function renderLog() {
   logPanel.innerHTML = engine.state.log.slice(0, 120).map(entry => `<div class="log-entry">[${entry.type}] ${htmlEscape(entry.message)}</div>`).join('');
 }
 
-function render() {
+function legacyRender() {
   document.body.classList.toggle('is-setup', !engine);
   renderBoard();
   renderStatus();
@@ -873,7 +867,7 @@ function render() {
   renderLog();
 }
 
-function onNodeClick(nodeId) {
+function legacyOnNodeClick(nodeId) {
   if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
   try {
     if (uiMode.type === 'SELECT_BASE_ROAD') {
@@ -907,7 +901,7 @@ function onNodeClick(nodeId) {
   }
 }
 
-function onEdgeClick(edgeIdValue) {
+function legacyOnEdgeClick(edgeIdValue) {
   if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
   const selectable = selectableEdges();
   if (!selectable.has(edgeIdValue)) return;
@@ -960,7 +954,7 @@ function onEdgeClick(edgeIdValue) {
   }
 }
 
-function processDrawCardAndMaybeFinish() {
+function legacyProcessDrawCardAndMaybeFinish() {
   try {
     const card = engine.drawCard();
     let res = engine.resolveCard(card);
@@ -979,7 +973,7 @@ function processDrawCardAndMaybeFinish() {
   }
 }
 
-function finishTurn() {
+function legacyFinishTurn() {
   clearPendingWait();
   const previousMerchantIndex = engine.state.currentMerchant?.index;
   const completedCount = engine.state.completedMerchants.length;
@@ -1010,4 +1004,951 @@ function finishTurn() {
   }
 }
 
+function isOnline() { return Boolean(online?.room); }
+function onlineViewer() { return online?.room?.viewer || null; }
+function isOnlineActionTurn() {
+  if (!isOnline() || !engine) return false;
+  const viewer = onlineViewer();
+  if (!viewer || viewer.spectator || viewer.playerIndex === null) return false;
+  const expected = engine.state.phase === PHASE.PRE_BUILD
+    ? engine.state.preBuildIndex
+    : engine.state.currentPlayerIndex;
+  return expected === viewer.playerIndex && engine.state.phase !== PHASE.GAME_END;
+}
+function isInteractiveUiMode(type = uiMode.type) {
+  return new Set([
+    'IDLE', 'CHOOSE_ACTION', 'SELECT_BASE_ROAD', 'SELECT_EDGE_ROAD',
+    'SELECT_BASE_SECOND', 'SELECT_EDGE_SECOND',
+    'CARD_SELECT_BRIDGE_TO_ROAD', 'CARD_SELECT_ROAD_TO_REMOVE', 'CARD_SELECT_BRIDGE_EDGE',
+  ]).has(type);
+}
+function canInteract() {
+  return Boolean(engine)
+    && (!isOnline() || (online.connected && isOnlineActionTurn()))
+    && !onlineRequestBusy;
+}
+function loadOnlineSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('infrastrationOnlineSession') || 'null');
+    if (!saved?.roomId || !saved?.clientToken) return null;
+    return { roomId: saved.roomId, clientToken: saved.clientToken, room: null, connected: false };
+  } catch {
+    return null;
+  }
+}
+function saveOnlineSession() {
+  if (!online?.roomId || !online?.clientToken) return;
+  localStorage.setItem('infrastrationOnlineSession', JSON.stringify({
+    roomId: online.roomId,
+    clientToken: online.clientToken,
+  }));
+}
+function stopOnlineTransport() {
+  onlineEventSource?.close?.();
+  onlineEventSource = null;
+  if (onlinePollTimer) clearInterval(onlinePollTimer);
+  onlinePollTimer = null;
+  if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
+  onlineReconnectTimer = null;
+}
+function clearOnlineSession({ keepError = false } = {}) {
+  stopOnlineTransport();
+  online = null;
+  engine = null;
+  uiMode = { type: 'SETUP' };
+  localStorage.removeItem('infrastrationOnlineSession');
+  if (!keepError) lastOnlineError = '';
+}
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `请求失败（HTTP ${response.status}）`);
+  return data;
+}
+function pendingJoinToken(roomId) {
+  const key = `infrastrationPendingJoin:${roomId}`;
+  let token = sessionStorage.getItem(key);
+  if (!token) {
+    const seed = globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 16)
+      || Math.random().toString(36).slice(2, 18);
+    token = `C${seed.toUpperCase()}`;
+    sessionStorage.setItem(key, token);
+  }
+  return token;
+}
+async function refreshRooms() {
+  if (!roomsList) return;
+  roomsLoading = true;
+  renderSetupMode();
+  try {
+    rooms = (await api('/api/rooms')).rooms || [];
+    lastOnlineError = '';
+  } catch (error) {
+    rooms = [];
+    lastOnlineError = `${error.message}。请先运行 npm run serve。`;
+  } finally {
+    roomsLoading = false;
+    renderSetupMode();
+  }
+}
+async function createOnlineRoom(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    const data = await api('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        roomName: form.get('roomName'),
+        playerName: form.get('playerName'),
+        playerCount: Number(form.get('playerCount')),
+      }),
+    });
+    online = { roomId: data.room.id, clientToken: data.clientToken, room: null, connected: false };
+    saveOnlineSession();
+    applyOnlineRoom(data.room);
+    connectRoomEvents();
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+async function joinOnlineRoom(roomId, spectator = false) {
+  const name = prompt(spectator ? '请输入观战名称' : '请输入玩家名称', spectator ? '观战者' : '玩家');
+  if (name === null) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerName: name,
+        spectator,
+        clientToken: spectator ? undefined : pendingJoinToken(roomId),
+      }),
+    });
+    online = { roomId: data.room.id, clientToken: data.clientToken, room: null, connected: false };
+    saveOnlineSession();
+    applyOnlineRoom(data.room);
+    connectRoomEvents();
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+    refreshRooms();
+  }
+}
+function startRoomPolling() {
+  if (onlinePollTimer || !online?.roomId || !online?.clientToken) return;
+  onlinePollTimer = setInterval(async () => {
+    if (!online?.roomId || !online?.clientToken) return;
+    try {
+      const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}?clientToken=${encodeURIComponent(online.clientToken)}`);
+      applyOnlineRoom(data.room);
+    } catch (error) {
+      lastOnlineError = error.message;
+      render();
+    }
+  }, 3000);
+}
+function scheduleRoomEventsReconnect() {
+  if (onlineReconnectTimer || !online?.roomId) return;
+  onlineReconnectTimer = setTimeout(() => {
+    onlineReconnectTimer = null;
+    connectRoomEvents();
+  }, 5000);
+}
+function connectRoomEvents() {
+  if (!online?.roomId || !online?.clientToken || onlineEventSource) return;
+  const source = new EventSource(`/api/rooms/${encodeURIComponent(online.roomId)}/events?clientToken=${encodeURIComponent(online.clientToken)}`);
+  onlineEventSource = source;
+  source.onopen = () => {
+    if (onlineEventSource !== source) return;
+    if (online) online.connected = true;
+    if (onlinePollTimer) clearInterval(onlinePollTimer);
+    onlinePollTimer = null;
+    lastOnlineError = '';
+    render();
+  };
+  source.addEventListener('room', event => {
+    try {
+      applyOnlineRoom(JSON.parse(event.data));
+    } catch (error) {
+      lastOnlineError = error.message;
+      render();
+    }
+  });
+  source.onerror = () => {
+    if (onlineEventSource === source) onlineEventSource = null;
+    source.close();
+    if (!online) return;
+    online.connected = false;
+    startRoomPolling();
+    scheduleRoomEventsReconnect();
+    render();
+  };
+}
+async function reconnectOnlineSession() {
+  if (!online?.roomId || !online?.clientToken) return;
+  setupMode = 'online';
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}?clientToken=${encodeURIComponent(online.clientToken)}`);
+    applyOnlineRoom(data.room);
+    connectRoomEvents();
+  } catch (error) {
+    clearOnlineSession({ keepError: true });
+    lastOnlineError = `线上会话已断开：${error.message}`;
+    render();
+  }
+}
+async function sendOnlineAction(type, payload = {}) {
+  if (!online?.roomId || !online?.clientToken || onlineRequestBusy) return null;
+  onlineRequestBusy = true;
+  render();
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: online.clientToken, type, payload }),
+    });
+    applyOnlineRoom(data.room);
+    return data.result || { type };
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+    return null;
+  } finally {
+    onlineRequestBusy = false;
+    render();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Formal edition client integration: lobby, online room controls, reference
+// modals and the server-authoritative online turn flow.
+// ---------------------------------------------------------------------------
+function onlinePhaseLabel(status) {
+  return ({ waiting: '等待开局', playing: '游戏进行中', game_over: '游戏已结束' })[status] || status || '未知状态';
+}
+
+function restoreOnlinePendingCardMode() {
+  if (!engine?.state.pendingCard) return;
+  const card = engine.state.pendingCard;
+  const options = engine.state.pendingCardOptions || {};
+  const playerId = engine.currentPlayerId;
+  if (card === CARD.BRIDGE_TO_ROAD) {
+    uiMode = {
+      type: 'CARD_SELECT_BRIDGE_TO_ROAD',
+      card,
+      candidates: engine.getOwnBridgesWithoutRoad(playerId).map(edge => edge.id),
+    };
+    return;
+  }
+  if (card === CARD.REMOVE_ROAD_BUILD_BRIDGE) {
+    const roadCandidates = engine.getRoadEdgesOf(playerId).map(edge => edge.id);
+    const bridgeCandidates = engine.getBuildableBridgeEdges(playerId).map(edge => edge.id);
+    uiMode = options.selectedRoadToRemove
+      ? {
+        type: 'CARD_SELECT_BRIDGE_EDGE',
+        card,
+        roadCandidates,
+        bridgeCandidates,
+        selectedRoadToRemove: options.selectedRoadToRemove,
+      }
+      : { type: 'CARD_SELECT_ROAD_TO_REMOVE', card, roadCandidates, bridgeCandidates };
+    return;
+  }
+  // The other cards resolve immediately. This fallback protects the renderer
+  // from an old or malformed snapshot without mutating server state.
+  uiMode = { type: 'IDLE' };
+}
+
+function deriveOnlineUiMode(room) {
+  if (!engine || !room) return { type: 'SETUP' };
+  if (engine.state.phase === PHASE.GAME_END) return { type: 'GAME_END' };
+  if (!isOnlineActionTurn()) return { type: 'IDLE' };
+  if (engine.state.phase === PHASE.PRE_BUILD) return { type: 'IDLE' };
+  if (engine.state.pendingCard) {
+    restoreOnlinePendingCardMode();
+    return uiMode;
+  }
+  if (engine.state.lastDie1 === null) return { type: 'IDLE' };
+  if (engine.state.lastDie2 === null) {
+    return room.turnActionCommitted ? { type: 'IDLE' } : { type: 'CHOOSE_ACTION' };
+  }
+  if (room.secondDieResolved) {
+    return engine.state.lastDie2 === engine.state.lastDie1 && !room.turnActionCommitted
+      ? { type: 'CHOOSE_ACTION' }
+      : { type: 'IDLE' };
+  }
+  const baseNodeId = room.secondDieBaseNodeId;
+  const candidates = baseNodeId
+    ? engine.getBuildableSecondDieTargets(engine.currentPlayerId, baseNodeId, engine.state.lastDie2)
+    : [];
+  return candidates.length
+    ? { type: 'SELECT_EDGE_SECOND', baseNodeId, candidateNodeIds: candidates }
+    : { type: 'IDLE' };
+}
+
+// Reconcile a room snapshot after REST, SSE or reconnect. The server remains
+// authoritative; this engine instance is only a read model for rendering and
+// local hit testing.
+function applyOnlineRoom(room, { renderNow = true } = {}) {
+  if (!online || !room) return;
+  if (room.viewer === null) {
+    clearOnlineSession({ keepError: true });
+    lastOnlineError = '你已离开或被移出该房间。';
+    if (renderNow) render();
+    return;
+  }
+  const previousRoom = online.room;
+  const previousPhase = previousRoom?.game?.phase;
+  const previousIndex = previousRoom?.game
+    ? (previousRoom.game.phase === PHASE.PRE_BUILD
+      ? previousRoom.game.preBuildIndex
+      : previousRoom.game.currentPlayerIndex)
+    : null;
+  online.room = room;
+  online.connected = true;
+  setupMode = 'online';
+  engine = room.game ? GameEngine.fromState(room.game) : null;
+  if (engine && (previousPhase !== engine.state.phase || previousIndex !== (engine.state.phase === PHASE.PRE_BUILD ? engine.state.preBuildIndex : engine.state.currentPlayerIndex))) {
+    clearPendingWait();
+  }
+  if (!engine) {
+    uiMode = { type: 'SETUP' };
+  } else if (engine.state.pendingCard && isOnlineActionTurn()) {
+    restoreOnlinePendingCardMode();
+  } else {
+    uiMode = deriveOnlineUiMode(room);
+  }
+  lastOnlineError = '';
+  if (renderNow) render();
+}
+
+function renderSetupMode() {
+  if (!localSetupContent || !onlineSetupContent) return;
+  const onlineMode = setupMode === 'online';
+  localSetupContent.classList.toggle('hidden', onlineMode);
+  onlineSetupContent.classList.toggle('hidden', !onlineMode);
+  localModeBtn?.classList.toggle('active', !onlineMode);
+  onlineModeBtn?.classList.toggle('active', onlineMode);
+  if (!roomsList || !onlineMode) return;
+  if (roomsLoading) {
+    roomsList.innerHTML = '<p class="small">正在刷新房间列表……</p>';
+    return;
+  }
+  const roomItems = rooms.length
+    ? rooms.map(room => {
+      const full = room.occupied >= room.playerCount;
+      const canJoin = room.status === 'waiting' && !full;
+      const action = canJoin
+        ? `<button type="button" data-room-action="join" data-room-id="${htmlEscape(room.id)}">??</button>`
+        : room.status === 'waiting'
+          ? '<button type="button" disabled>??</button>'
+          : `<button type="button" data-room-action="spectate" data-room-id="${htmlEscape(room.id)}">??</button>`;
+      return `<div class="room-item">
+        <div><b>${htmlEscape(room.name)}</b><p>${htmlEscape(room.id)} ? ${onlinePhaseLabel(room.status)} ? ${room.occupied}/${room.playerCount} ?</p></div>
+        ${action}
+      </div>`;
+    }).join('')
+    : '<p class="small">暂无可加入的房间。你可以创建一个新房间。</p>';
+  const errorItem = lastOnlineError ? `<div class="online-error">${htmlEscape(lastOnlineError)}</div>` : '';
+  roomsList.innerHTML = roomItems + errorItem;
+}
+
+function renderOnlineRoomPanel() {
+  if (!onlineRoomPanel) return;
+  const room = online?.room;
+  if (!room || !room.viewer) {
+    onlineRoomPanel.classList.add('hidden');
+    onlineRoomPanel.innerHTML = '';
+    return;
+  }
+  onlineRoomPanel.classList.remove('hidden');
+  const viewer = room.viewer;
+  const seats = room.seats || [];
+  const connectedLabel = online.connected ? '在线同步' : '正在重连（可继续查看最近状态）';
+  const seatHtml = seats.map(seat => {
+    const status = seat.occupied
+      ? `${seat.connected ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}`
+      : '空座位';
+    const kick = viewer.isHost && seat.occupied && !seat.isHost && room.status === 'waiting'
+      ? `<button type="button" class="mini-button danger" data-kick-index="${seat.index}">移出</button>`
+      : '';
+    return `<div class="online-seat ${seat.occupied ? 'occupied' : ''}">
+      <span><b>${seat.occupied ? htmlEscape(seat.name) : `座位 ${seat.index + 1}`}</b><small>${status}</small></span>
+      ${seat.isHost && seat.occupied ? '<strong title="房主">房主</strong>' : kick}
+    </div>`;
+  }).join('');
+  const roomActions = room.status === 'waiting'
+    ? `<div class="online-room-actions">
+        ${!viewer.spectator && !viewer.isHost ? `<button id="onlineReadyBtn" class="${viewer.ready ? '' : 'primary'}" type="button">${viewer.ready ? '取消准备' : '准备'}</button>` : ''}
+        ${viewer.isHost ? '<button id="onlineStartBtn" class="primary" type="button">开始游戏</button>' : ''}
+        <button id="onlineLeaveBtn" type="button">离开房间</button>
+      </div>`
+    : `<div class="online-room-actions"><button id="onlineLeaveBtn" type="button">${room.status === 'game_over' ? '关闭房间面板' : '离开房间'}</button></div>`;
+  const stateLine = room.status === 'waiting'
+    ? '房间坐满后，所有非房主玩家准备，房主即可开始。'
+    : room.game
+      ? `当前阶段：${room.game.phase === PHASE.PRE_BUILD ? '开局预建设' : room.game.phase === PHASE.PLAYER_TURN ? '正式回合' : '游戏结束'}`
+      : onlinePhaseLabel(room.status);
+  const chatHtml = (room.chat || []).map(item => `<p><b>${htmlEscape(item.sender)}：</b>${htmlEscape(item.message)}</p>`).join('') || '<p class="small">还没有聊天消息。</p>';
+  onlineRoomPanel.innerHTML = `<div class="online-room-head">
+    <div><h2>${htmlEscape(room.name)}</h2><div class="small">房间号 <code>${htmlEscape(room.id)}</code> · ${onlinePhaseLabel(room.status)}</div></div>
+    <div class="small">${connectedLabel}</div>
+  </div>
+  <div class="online-seats">${seatHtml}</div>
+  <div class="online-game-state">${stateLine}</div>
+  ${roomActions}
+  <div class="online-chat"><h3>房间聊天</h3><div class="chat-messages" id="onlineChatMessages">${chatHtml}</div>
+    <form id="onlineChatForm"><input name="message" maxlength="300" autocomplete="off" placeholder="输入消息……" /><button class="primary" type="submit">发送</button></form>
+  </div>`;
+
+  document.getElementById('onlineReadyBtn')?.addEventListener('click', () => setOnlineReady(!viewer.ready));
+  document.getElementById('onlineStartBtn')?.addEventListener('click', () => startOnlineRoom());
+  document.getElementById('onlineLeaveBtn')?.addEventListener('click', () => leaveOnlineRoom());
+  onlineRoomPanel.querySelectorAll('[data-kick-index]').forEach(button => {
+    button.addEventListener('click', () => kickOnlinePlayer(Number(button.dataset.kickIndex)));
+  });
+  document.getElementById('onlineChatForm')?.addEventListener('submit', sendChatMessage);
+  const chatMessages = document.getElementById('onlineChatMessages');
+  if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function setOnlineReady(ready) {
+  if (!online?.roomId || !online?.clientToken) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}/ready`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: online.clientToken, ready }),
+    });
+    applyOnlineRoom(data.room);
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+  }
+}
+
+async function startOnlineRoom() {
+  if (!online?.roomId || !online?.clientToken) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: online.clientToken }),
+    });
+    applyOnlineRoom(data.room);
+    connectRoomEvents();
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+  }
+}
+
+async function kickOnlinePlayer(playerIndex) {
+  if (!online?.roomId || !online?.clientToken) return;
+  const seat = online.room?.seats?.[playerIndex];
+  if (!seat || !window.confirm(`确定要将 ${seat.name || `座位 ${playerIndex + 1}`} 移出房间吗？`)) return;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}/kick`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: online.clientToken, playerIndex }),
+    });
+    applyOnlineRoom(data.room);
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+  }
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  if (!online?.roomId || !online?.clientToken) return;
+  const form = event.currentTarget;
+  const input = form.elements.message;
+  const message = String(input?.value || '').trim();
+  if (!message) return;
+  const button = form.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(online.roomId)}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: online.clientToken, message }),
+    });
+    applyOnlineRoom(data.room);
+  } catch (error) {
+    lastOnlineError = error.message;
+    render();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function leaveOnlineRoom() {
+  const current = online;
+  if (!current?.roomId || !current?.clientToken) {
+    clearOnlineSession();
+    render();
+    return;
+  }
+  try {
+    await api(`/api/rooms/${encodeURIComponent(current.roomId)}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: current.clientToken }),
+    });
+  } catch {
+    // A closed/expired room is already equivalent to leaving from the UI.
+  }
+  clearOnlineSession();
+  setupMode = 'online';
+  render();
+  refreshRooms();
+}
+
+function openReferenceModal(title, bodyHtml) {
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `<div class="modal-backdrop" data-modal-backdrop><div class="modal-dialog" role="dialog" aria-modal="true" aria-label="${htmlEscape(title)}">
+    <div class="modal-head"><h2>${htmlEscape(title)}</h2><button class="modal-close" type="button" aria-label="关闭">×</button></div>${bodyHtml}
+  </div></div>`;
+  const backdrop = modalRoot.querySelector('[data-modal-backdrop]');
+  const close = () => { modalRoot.innerHTML = ''; };
+  modalRoot.querySelector('.modal-close')?.addEventListener('click', close);
+  backdrop?.addEventListener('click', event => { if (event.target === backdrop) close(); });
+}
+
+function renderRulesModal() {
+  const body = `<div class="rules-list">${RULE_SECTIONS.map(section => `<section class="rule-section"><h3>${htmlEscape(section.title)}</h3><p>${htmlEscape(section.body)}</p></section>`).join('')}</div>`;
+  openReferenceModal('规则介绍', body);
+}
+
+function renderCardCatalogModal() {
+  const body = `<div class="catalog-grid">${CARD_CATALOG.map(card => `<article class="catalog-card tone-${htmlEscape(card.tone)}">
+    <div class="catalog-card-head"><span class="catalog-icon">${card.icon}</span><h3>${htmlEscape(card.name)}</h3></div>
+    <span class="catalog-tag">${htmlEscape(card.tag)}</span>
+    <p>${htmlEscape(card.description)}</p>
+    <div class="catalog-meta"><span>抽取权重：${htmlEscape(card.probability)}</span><span>效果：${htmlEscape(card.effect)}</span></div>
+  </article>`).join('')}</div>`;
+  openReferenceModal('卡牌图鉴', body);
+}
+
+function localResetToSetup() {
+  cancelMerchantAnimation();
+  clearPendingWait();
+  if (online?.roomId) {
+    const current = online;
+    api(`/api/rooms/${encodeURIComponent(current.roomId)}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({ clientToken: current.clientToken }),
+    }).catch(() => {});
+  }
+  clearOnlineSession();
+  setupMode = 'local';
+  engine = null;
+  uiMode = { type: 'SETUP' };
+  render();
+}
+
+function updateOnlineWaitMode(message, afterWait, delayMs = 900) {
+  beginWaitingMessage(message, afterWait, delayMs);
+}
+
+function onlineTurnFinishedAnnouncement(previousCompletedCount, previousMerchantIndex) {
+  if (!engine) return;
+  const completedMerchant = engine.state.completedMerchants.length > previousCompletedCount
+    ? engine.state.completedMerchants.at(-1)
+    : null;
+  const gameEnded = engine.state.phase === PHASE.GAME_END;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  return { completedMerchant, gameEnded, shouldAnnounceBigMerchant };
+}
+
+function selectableEdges() {
+  if (!engine) return new Set();
+  if (isOnline() && !isOnlineActionTurn()) return new Set();
+  const s = engine.state;
+  if (s.phase === PHASE.PRE_BUILD) return new Set(engine.getBuildableRoadEdges(engine.preBuildPlayerId).map(e => e.id));
+  if (uiMode.type === 'SELECT_EDGE_ROAD') return new Set(engine.getBuildableRoadEdgesFromBase(engine.currentPlayerId, uiMode.baseNodeId).map(e => e.id));
+  if (uiMode.type === 'SELECT_EDGE_SECOND') return new Set((uiMode.candidateNodeIds || []).map(id => edgeId(uiMode.baseNodeId, id)));
+  if (uiMode.type === 'CARD_SELECT_BRIDGE_TO_ROAD') return new Set(uiMode.candidates || []);
+  if (uiMode.type === 'CARD_SELECT_ROAD_TO_REMOVE') return new Set(uiMode.roadCandidates || []);
+  if (uiMode.type === 'CARD_SELECT_BRIDGE_EDGE') return new Set(uiMode.bridgeCandidates || []);
+  return new Set();
+}
+
+function selectableNodes() {
+  if (!engine || (isOnline() && !isOnlineActionTurn())) return new Set();
+  if (uiMode.type === 'CHOOSE_ACTION' || uiMode.type === 'SELECT_BASE_ROAD' || uiMode.type === 'SELECT_BASE_SECOND') {
+    return new Set(engine.getBuildableBaseNodesForDie1(engine.currentPlayerId));
+  }
+  if (uiMode.type === 'SELECT_EDGE_SECOND') return new Set(uiMode.candidateNodeIds || []);
+  return new Set();
+}
+
+function renderStatus() {
+  if (!engine) {
+    phaseBadge.textContent = '未开始';
+    statusPanel.innerHTML = online?.room
+      ? `<p class="small">${onlinePhaseLabel(online.room.status)}。请在房间面板查看座位、聊天和控制。</p>`
+      : '<p class="small">请创建游戏。</p>';
+    boardHint.textContent = online?.room ? '线上房间尚未开始游戏。' : '创建游戏后开始。';
+    return;
+  }
+  const s = engine.state;
+  phaseBadge.textContent = s.phase === PHASE.PRE_BUILD ? '开局预建设' : s.phase === PHASE.PLAYER_TURN ? '正式回合' : '游戏结束';
+  const currentName = s.phase === PHASE.PRE_BUILD ? s.players[engine.preBuildPlayerId]?.name : s.players[engine.currentPlayerId]?.name;
+  const merchant = merchantAnimation?.merchant || s.currentMerchant;
+  const lines = [
+    `<div class="kv-row"><span>当前阶段</span><b>${phaseBadge.textContent}</b></div>`,
+    `<div class="kv-row"><span>当前玩家</span><b>${htmlEscape(currentName || '-')}</b></div>`,
+    `<div class="kv-row"><span>回合编号</span><b>${s.turnNumber || '-'}</b></div>`,
+    `<div class="kv-row"><span>第一骰</span><b>${s.lastDie1 ?? '-'}</b></div>`,
+    `<div class="kv-row"><span>第二骰</span><b>${s.lastDie2 ?? '-'}</b></div>`,
+  ];
+  if (isOnline()) lines.push(`<div class="kv-row"><span>连接状态</span><b>${online.connected ? '已连接' : '重连中'}</b></div>`);
+  if (merchant) lines.push(`<div class="merchant-box"><span>${merchantName(merchant)}</span><b>${coordLabel(merchant.startNodeId)} → ${coordLabel(merchant.endNodeId)}</b></div>`);
+  if (s.result) lines.push(`<p><b>获胜者：</b>${s.result.winners.map(id => htmlEscape(s.players[id].name)).join('、')}</p>`);
+  statusPanel.innerHTML = lines.join('');
+  boardHint.textContent = hintText();
+  boardHint.classList.toggle('waiting-hint', uiMode.type === 'WAITING_MESSAGE' || uiMode.type === 'MERCHANT_ANIMATION');
+}
+
+function renderActions() {
+  if (!engine) {
+    actionPanel.innerHTML = online?.room
+      ? '<p class="small">等待房主开始游戏。开始后，服务器会把每一步同步给所有房间成员。</p>'
+      : '<p class="small">创建游戏后显示可用操作。</p>';
+    return;
+  }
+  const s = engine.state;
+  const room = online?.room;
+  if (s.phase === PHASE.GAME_END) {
+    const rows = s.result?.rankings?.map((p, i) => `<div class="player-row"><b>#${i + 1} ${htmlEscape(p.name)}</b><span>${p.tollMoney}$ · 路 ${p.roads} · 桥 ${p.bridges}</span></div>`).join('') || '';
+    actionPanel.innerHTML = `<p>五位商人已完成交易。</p>${rows}`;
+    return;
+  }
+  if (isOnline() && !isOnlineActionTurn()) {
+    const viewer = onlineViewer();
+    const currentId = s.phase === PHASE.PRE_BUILD ? engine.preBuildPlayerId : engine.currentPlayerId;
+    const current = s.players[currentId]?.name || '其他玩家';
+    actionPanel.innerHTML = `<p class="waiting-message">${viewer?.spectator ? '你正在观战。' : `请等待 ${htmlEscape(current)} 操作。`}</p>`;
+    return;
+  }
+  if (uiMode.type === 'MERCHANT_ANIMATION') {
+    actionPanel.innerHTML = `<p class="waiting-message">${htmlEscape(hintText())}</p>`;
+    return;
+  }
+  if (s.phase === PHASE.PRE_BUILD) {
+    actionPanel.innerHTML = `<p>请在地图中点击高亮边，为 <b>${htmlEscape(s.players[engine.preBuildPlayerId].name)}</b> 建设初始道路。</p>`;
+    return;
+  }
+  if (s.pendingCard || uiMode.type.startsWith('CARD_')) {
+    actionPanel.innerHTML = `<p><b>${htmlEscape(cardName(s.pendingCard || uiMode.card))}</b></p><p>${htmlEscape(hintText())}</p>`;
+    return;
+  }
+  if (room?.turnActionCommitted) {
+    actionPanel.innerHTML = '<p>本回合建设已完成。</p><button id="finishTurnBtn" class="primary">结束回合</button>';
+    document.getElementById('finishTurnBtn').addEventListener('click', () => finishTurn());
+    return;
+  }
+  if (s.lastDie1 === null) {
+    actionPanel.innerHTML = '<button id="startTurnBtn" class="primary">掷第一骰 / 开始回合</button>';
+    document.getElementById('startTurnBtn').addEventListener('click', () => {
+      clearPendingWait();
+      if (isOnline()) {
+        sendOnlineAction('startTurn').then(result => { if (result) { uiMode = { type: 'CHOOSE_ACTION' }; render(); } });
+      } else {
+        engine.startTurn();
+        uiMode = { type: 'CHOOSE_ACTION' };
+        render();
+      }
+    });
+    return;
+  }
+  if (s.lastDie2 !== null && room?.secondDieResolved && s.lastDie2 === s.lastDie1) {
+    actionPanel.innerHTML = `<p>第一骰 ${s.lastDie1} 与第二骰 ${s.lastDie2} 相同，获得一次建设卡机会。</p><button id="drawCardBtn" class="primary">抽建设卡</button>`;
+    document.getElementById('drawCardBtn').addEventListener('click', processDrawCardAndMaybeFinish);
+    return;
+  }
+  if (uiMode.type === 'WAITING_MESSAGE') {
+    actionPanel.innerHTML = `<p class="waiting-message">${htmlEscape(hintText())}</p>`;
+    return;
+  }
+  if (uiMode.type === 'CHOOSE_ACTION') {
+    const buildableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
+    const onlineSuffix = isOnline() ? '（服务器将校验本次行动）' : '';
+    actionPanel.innerHTML = `<p><b>${htmlEscape(s.players[engine.currentPlayerId].name)}</b> 的第一骰为 <b>${s.lastDie1}</b>，请选择行动：${onlineSuffix}</p>
+      <button id="drawCardBtn">1. 抽建设卡</button>
+      <button id="buildRoadBtn">2. 选基地修路${buildableBases.length ? `（${buildableBases.length} 个可用基地）` : '（无可用基地，将跳过）'}</button>
+      <button id="secondDieBtn" ${buildableBases.length ? '' : 'disabled'}>3. 选基地后掷第二骰</button>`;
+    document.getElementById('drawCardBtn').addEventListener('click', processDrawCardAndMaybeFinish);
+    document.getElementById('buildRoadBtn').addEventListener('click', () => {
+      if (!buildableBases.length) {
+        if (isOnline()) {
+          sendOnlineAction('skipBuildRoad').then(result => { if (result) finishTurn(); });
+        } else {
+          engine.log('NO_EFFECT', `第一骰为 ${s.lastDie1}，没有任何可正常修路的基地，行动2跳过回合`);
+          finishTurn();
+        }
+      } else {
+        uiMode = { type: 'SELECT_BASE_ROAD' };
+        render();
+      }
+    });
+    document.getElementById('secondDieBtn').addEventListener('click', () => { uiMode = { type: 'SELECT_BASE_SECOND' }; render(); });
+    return;
+  }
+  actionPanel.innerHTML = `<p>${htmlEscape(hintText())}</p>`;
+}
+
+function render() {
+  document.body.classList.toggle('is-setup', !engine);
+  renderSetupMode();
+  renderOnlineRoomPanel();
+  renderBoard();
+  renderStatus();
+  renderPlayers();
+  renderActions();
+  renderLog();
+}
+
+async function handleOnlineSecondDieResult(result) {
+  if (!result) return;
+  const candidates = result.candidates || [];
+  if (candidates.length) {
+    uiMode = { type: 'SELECT_EDGE_SECOND', baseNodeId: online.room.secondDieBaseNodeId, candidateNodeIds: candidates };
+    render();
+    return;
+  }
+  const pair = engine?.state.lastDie2 === engine?.state.lastDie1;
+  updateOnlineWaitMode(
+    pair ? '第二骰没有可建设目标，但点数相同，稍后抽建设卡。' : '第二骰没有符合条件的建设目标，稍后结束回合。',
+    () => pair ? processDrawCardAndMaybeFinish() : finishTurn(),
+  );
+}
+
+async function onNodeClick(nodeId) {
+  if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
+  if (isOnline() && !canInteract()) return;
+  try {
+    const validBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
+    if (uiMode.type === 'SELECT_BASE_ROAD') {
+      if (!validBases.includes(nodeId)) return;
+      uiMode = { type: 'SELECT_EDGE_ROAD', baseNodeId: nodeId };
+      render();
+      return;
+    }
+    if (uiMode.type === 'SELECT_BASE_SECOND') {
+      if (!validBases.includes(nodeId)) return;
+      if (isOnline()) {
+        const result = await sendOnlineAction('rollSecondDie', { baseNodeId: nodeId });
+        await handleOnlineSecondDieResult(result);
+      } else {
+        const { candidates } = engine.rollSecondDieForBase(nodeId);
+        if (!candidates.length) {
+          engine.log('NO_EFFECT', '第二骰没有符合条件的建设目标，本次建设无效果');
+          waitAfterSecondDie('建设无效：第二骰没有符合条件的目标。');
+        } else {
+          uiMode = { type: 'SELECT_EDGE_SECOND', baseNodeId: nodeId, candidateNodeIds: candidates };
+          render();
+        }
+      }
+      return;
+    }
+    if (uiMode.type === 'SELECT_EDGE_SECOND' && (uiMode.candidateNodeIds || []).includes(nodeId)) {
+      await onEdgeClick(edgeId(uiMode.baseNodeId, nodeId));
+    }
+  } catch (error) {
+    alert(error.message);
+    render();
+  }
+}
+
+async function onEdgeClick(edgeIdValue) {
+  if (!engine || uiMode.type === 'MERCHANT_ANIMATION') return;
+  if (isOnline() && !canInteract()) return;
+  if (!selectableEdges().has(edgeIdValue)) return;
+  try {
+    if (engine.state.phase === PHASE.PRE_BUILD) {
+      if (isOnline()) {
+        await sendOnlineAction('preBuildRoad', { edgeId: edgeIdValue });
+      } else {
+        engine.preBuildRoad(edgeIdValue);
+        uiMode = { type: 'IDLE' };
+        render();
+      }
+      return;
+    }
+    if (uiMode.type === 'SELECT_EDGE_ROAD') {
+      if (isOnline()) {
+        const result = await sendOnlineAction('buildFromBase', { baseNodeId: uiMode.baseNodeId, edgeId: edgeIdValue });
+        if (result) await finishTurn();
+      } else {
+        engine.buildFromBase(uiMode.baseNodeId, edgeIdValue);
+        finishTurn();
+      }
+      return;
+    }
+    if (uiMode.type === 'SELECT_EDGE_SECOND') {
+      const edge = engine.getEdge(edgeIdValue);
+      const targetNodeId = edge.nodeA === uiMode.baseNodeId ? edge.nodeB : edge.nodeA;
+      if (isOnline()) {
+        const result = await sendOnlineAction('resolveSecondDieBuild', { baseNodeId: uiMode.baseNodeId, targetNodeId });
+        if (!result) return;
+        const pair = engine.state.lastDie2 === engine.state.lastDie1;
+        updateOnlineWaitMode(
+          pair ? '第二骰建设完成，点数相同，稍后抽建设卡。' : '第二骰建设完成，稍后结束回合。',
+          () => pair ? processDrawCardAndMaybeFinish() : finishTurn(),
+        );
+      } else {
+        engine.resolveSecondDieBuild(uiMode.baseNodeId, targetNodeId);
+        if (engine.state.lastDie2 === engine.state.lastDie1) waitAfterSecondDie('本次建设已完成。')
+        else finishTurn();
+      }
+      return;
+    }
+    if (uiMode.type === 'CARD_SELECT_BRIDGE_TO_ROAD') {
+      if (isOnline()) {
+        const result = await sendOnlineAction('resolveCard', { options: { selectedBridgeToRoadEdge: edgeIdValue } });
+        if (result?.done) { showAnnouncement(`建设卡：${cardName(result.card)}`, result.announcement || '建设卡已结算。'); await finishTurn(); }
+      } else {
+        const result = engine.resolveCard(uiMode.card, { selectedBridgeToRoadEdge: edgeIdValue });
+        if (result.done) { showAnnouncement(`建设卡：${cardName(uiMode.card)}`, result.announcement || '建设卡已结算。'); finishTurn(); }
+      }
+      return;
+    }
+    if (uiMode.type === 'CARD_SELECT_ROAD_TO_REMOVE') {
+      uiMode = { ...uiMode, type: 'CARD_SELECT_BRIDGE_EDGE', selectedRoadToRemove: edgeIdValue };
+      if (isOnline() && online.room?.game) online.room.game.pendingCardOptions = { selectedRoadToRemove: edgeIdValue };
+      render();
+      return;
+    }
+    if (uiMode.type === 'CARD_SELECT_BRIDGE_EDGE') {
+      const options = { selectedRoadToRemove: uiMode.selectedRoadToRemove, selectedBridgeEdge: edgeIdValue };
+      if (isOnline()) {
+        const result = await sendOnlineAction('resolveCard', { options });
+        if (result?.done) { showAnnouncement(`建设卡：${cardName(result.card)}`, result.announcement || '建设卡已结算。'); await finishTurn(); }
+      } else {
+        const result = engine.resolveCard(uiMode.card, options);
+        if (result.done) { showAnnouncement(`建设卡：${cardName(uiMode.card)}`, result.announcement || '建设卡已结算。'); finishTurn(); }
+      }
+    }
+  } catch (error) {
+    alert(error.message);
+    render();
+  }
+}
+
+async function processDrawCardAndMaybeFinish() {
+  if (!engine) return;
+  if (isOnline()) {
+    const result = await sendOnlineAction('drawCard');
+    if (!result) return;
+    const card = result.card || engine.state.pendingCard;
+    if (result.done) {
+      showAnnouncement(`建设卡：${cardName(card)}`, result.announcement || '建设卡已结算。');
+      await finishTurn();
+      return;
+    }
+    uiMode = { type: result.needs === 'SELECT_BRIDGE_TO_ROAD' ? 'CARD_SELECT_BRIDGE_TO_ROAD' : 'CARD_SELECT_ROAD_TO_REMOVE', card, candidates: result.candidates, roadCandidates: result.roadCandidates, bridgeCandidates: result.bridgeCandidates };
+    render();
+    return;
+  }
+  try {
+    const card = engine.drawCard();
+    const result = engine.resolveCard(card);
+    if (result.done) {
+      showAnnouncement(`建设卡：${cardName(card)}`, result.announcement || '建设卡已结算。');
+      finishTurn();
+      return;
+    }
+    showAnnouncement(`抽到建设卡：${cardName(card)}`, '请根据地图高亮选择本卡牌的目标。');
+    if (result.needs === 'SELECT_BRIDGE_TO_ROAD') uiMode = { type: 'CARD_SELECT_BRIDGE_TO_ROAD', card, candidates: result.candidates };
+    else if (result.needs === 'SELECT_ROAD_TO_REMOVE') uiMode = { type: 'CARD_SELECT_ROAD_TO_REMOVE', card, roadCandidates: result.roadCandidates, bridgeCandidates: result.bridgeCandidates };
+    render();
+  } catch (error) {
+    alert(error.message);
+    render();
+  }
+}
+
+async function finishTurn() {
+  if (!engine) return;
+  if (isOnline()) {
+    const previousCompletedCount = engine.state.completedMerchants.length;
+    const previousMerchantIndex = engine.state.currentMerchant?.index;
+    const result = await sendOnlineAction('finishTurn');
+    if (!result) return;
+    const { completedMerchant, gameEnded, shouldAnnounceBigMerchant } = onlineTurnFinishedAnnouncement(previousCompletedCount, previousMerchantIndex);
+    if (completedMerchant) {
+      startMerchantCompletionAnimation(completedMerchant, () => {
+        uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
+        render();
+        showMerchantSettlement(completedMerchant, () => {
+          if (gameEnded) showGameResultAnnouncement();
+          else if (shouldAnnounceBigMerchant) showAnnouncement('大商人前来交易', '城乡基建进入冲刺阶段');
+        });
+      });
+    } else {
+      uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
+      render();
+      if (shouldAnnounceBigMerchant) showAnnouncement('大商人前来交易', '城乡基建进入冲刺阶段');
+    }
+    return;
+  }
+  clearPendingWait();
+  const previousMerchantIndex = engine.state.currentMerchant?.index;
+  const completedCount = engine.state.completedMerchants.length;
+  engine.finishActionAndAdvance();
+  const completedMerchant = engine.state.completedMerchants.length > completedCount ? engine.state.completedMerchants.at(-1) : null;
+  const gameEnded = engine.state.phase === PHASE.GAME_END;
+  const shouldAnnounceBigMerchant = engine.state.currentMerchant?.index === 4 && previousMerchantIndex !== 4;
+  if (completedMerchant) {
+    startMerchantCompletionAnimation(completedMerchant, () => {
+      uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
+      render();
+      showMerchantSettlement(completedMerchant, () => {
+        if (gameEnded) showGameResultAnnouncement();
+        else if (shouldAnnounceBigMerchant) showAnnouncement('大商人前来交易', '城乡基建进入冲刺阶段');
+      });
+    });
+    return;
+  }
+  uiMode = { type: gameEnded ? 'GAME_END' : 'IDLE' };
+  render();
+  if (shouldAnnounceBigMerchant) showAnnouncement('大商人前来交易', '城乡基建进入冲刺阶段');
+}
+
+function installFormalEditionHandlers() {
+  createGameBtn?.addEventListener('click', () => {
+    const count = Number(playerCountInput?.value || 2);
+    const players = Array.from({ length: count }, (_, index) => ({ name: document.getElementById(`playerName${index + 1}`)?.value?.trim() || `玩家${index + 1}` }));
+    cancelMerchantAnimation();
+    clearPendingWait();
+    clearOnlineSession();
+    setupMode = 'local';
+    engine = new GameEngine({ players, seed: createRandomSeed() });
+    uiMode = { type: 'IDLE' };
+    render();
+  });
+  newGameTopBtn?.addEventListener('click', localResetToSetup);
+  localModeBtn?.addEventListener('click', () => { setupMode = 'local'; render(); });
+  onlineModeBtn?.addEventListener('click', () => { setupMode = 'online'; render(); refreshRooms(); });
+  document.getElementById('refreshRoomsBtn')?.addEventListener('click', refreshRooms);
+  document.getElementById('createRoomForm')?.addEventListener('submit', createOnlineRoom);
+  roomsList?.addEventListener('click', event => {
+    const button = event.target.closest('[data-room-action]');
+    if (!button) return;
+    const roomId = button.dataset.roomId;
+    joinOnlineRoom(roomId, button.dataset.roomAction === 'spectate');
+  });
+  document.getElementById('rulesBtn')?.addEventListener('click', renderRulesModal);
+  document.getElementById('catalogBtn')?.addEventListener('click', renderCardCatalogModal);
+  document.getElementById('setupRulesBtn')?.addEventListener('click', renderRulesModal);
+  document.getElementById('setupCatalogBtn')?.addEventListener('click', renderCardCatalogModal);
+}
+
+installFormalEditionHandlers();
 render();
+if (online?.roomId && online?.clientToken) reconnectOnlineSession();

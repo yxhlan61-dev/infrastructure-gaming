@@ -636,3 +636,79 @@ body:not(.is-setup) .setup-card {
   0%, 100% { opacity: .48; transform: scale(.9); transform-origin: center; }
   50% { opacity: .9; transform: scale(1.2); transform-origin: center; }
 }
+
+/* Formal edition lobby, room and reference modal styles. */
+.hidden { display: none !important; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.eyebrow { display: inline-block; color: #6366f1; font-size: 11px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.setup-hero { max-width: 700px; }
+.setup-subtitle { margin: 20px 0 6px; font-size: 18px; }
+.mode-tabs { display: flex; gap: 8px; margin: 22px 0 16px; padding: 5px; border-radius: 13px; background: #eef2ff; }
+.mode-tab { flex: 1; margin: 0; color: #475569; background: transparent; border: 1px solid transparent; }
+.mode-tab.active { color: #312e81; background: #fff; border-color: #c7d2fe; box-shadow: 0 2px 8px rgba(49,46,129,.12); }
+.online-grid { display: grid; grid-template-columns: minmax(250px, .85fr) minmax(300px, 1.15fr); gap: 14px; align-items: start; }
+.sub-card { padding: 16px; border: 1px solid #e0e7ff; border-radius: 14px; background: linear-gradient(180deg, #fafaff, #f8fafc); }
+.sub-card h3 { margin: 0 0 12px; font-size: 16px; }
+.wide { width: 100%; }
+.room-list-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.room-list-title h3 { margin: 0; }
+.rooms { display: grid; gap: 8px; max-height: 250px; overflow: auto; margin-top: 10px; }
+.room-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 11px; background: #fff; }
+.room-item p { margin: 3px 0 0; color: #64748b; font-size: 12px; }
+.room-item button { flex: 0 0 auto; }
+.online-note { margin: 16px 0 0; }
+.online-error { margin-top: 10px; padding: 9px 11px; border-radius: 9px; color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; }
+.setup-links { display: flex; gap: 14px; margin-top: 22px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+.link-button { padding: 4px 0; color: #4338ca; background: transparent; border-radius: 0; }
+.link-button:hover { color: #1d4ed8; text-decoration: underline; filter: none; }
+.online-room-card { padding: 16px; }
+.online-room-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; }
+.online-room-head h2 { margin: 3px 0 5px; }
+.online-room-head code { padding: 2px 6px; border-radius: 5px; color: #3730a3; background: #eef2ff; }
+.online-seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 14px 0; }
+.online-seat { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 10px; color: #64748b; background: #f8fafc; }
+.online-seat.occupied { color: #1e293b; background: #eff6ff; border-color: #bfdbfe; }
+.online-room-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0 4px; }
+.online-game-state { margin: 12px 0; padding: 9px 11px; border-radius: 9px; color: #1e3a8a; background: #eff6ff; }
+.mini-button { margin: 0; padding: 4px 7px; font-size: 12px; border-radius: 7px; }
+.online-chat { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+.online-chat h3 { margin: 0 0 8px; font-size: 15px; }
+.chat-messages { max-height: 160px; overflow: auto; padding: 8px 10px; border-radius: 9px; background: #f8fafc; }
+.chat-messages p { margin: 5px 0; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.chat-messages form, .online-chat form { display: flex; gap: 7px; margin-top: 8px; }
+.online-chat form input { margin: 0; min-width: 0; }
+.online-chat form button { flex: 0 0 auto; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.52); backdrop-filter: blur(3px); }
+.modal-dialog { width: min(820px, 100%); max-height: min(780px, calc(100vh - 40px)); overflow: auto; padding: 22px; border: 1px solid #cbd5e1; border-radius: 18px; background: #fff; box-shadow: 0 28px 90px rgba(15,23,42,.35); }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.modal-head h2 { margin: 0; font-size: 24px; color: #1e1b4b; }
+.modal-close { margin: 0; padding: 5px 9px; font-size: 20px; line-height: 1; color: #475569; background: #f1f5f9; }
+.rules-list { display: grid; gap: 12px; }
+.rule-section { padding: 13px 15px; border-left: 4px solid #6366f1; border-radius: 9px; background: #f8fafc; }
+.rule-section h3 { margin: 0 0 5px; font-size: 15px; color: #312e81; }
+.rule-section p { margin: 0; color: #475569; line-height: 1.65; }
+.catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.catalog-card { padding: 15px; border: 1px solid #e2e8f0; border-top: 4px solid #6366f1; border-radius: 12px; background: #f8fafc; }
+.catalog-card.tone-road { border-top-color: #2563eb; }
+.catalog-card.tone-bridge { border-top-color: #0891b2; }
+.catalog-card.tone-swap { border-top-color: #9333ea; }
+.catalog-card.tone-money { border-top-color: #d97706; }
+.catalog-card-head { display: flex; align-items: center; gap: 9px; }
+.catalog-icon { font-size: 26px; }
+.catalog-card h3 { margin: 0; font-size: 16px; }
+.catalog-tag { display: inline-block; margin: 10px 0 7px; padding: 3px 7px; border-radius: 999px; color: #3730a3; background: #e0e7ff; font-size: 11px; font-weight: 800; }
+.catalog-card p { margin: 6px 0 0; color: #475569; line-height: 1.55; }
+.catalog-meta { display: grid; gap: 4px; margin-top: 10px; color: #334155; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .topbar { align-items: flex-start; gap: 12px; }
+  .topbar-actions { flex-direction: column; align-items: stretch; }
+  .topbar .ghost { white-space: nowrap; }
+  body.is-setup .setup-card { padding: 20px; }
+  .online-grid, .catalog-grid { grid-template-columns: 1fr; }
+  .online-room-head { flex-direction: column; }
+  .online-room-head > div:last-child { width: 100%; }
+  .online-room-head > div:last-child button { width: calc(50% - 6px); }
+  .setup-links { flex-wrap: wrap; }
+  .modal-dialog { padding: 17px; }
+}

@@ -3,34 +3,76 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>城乡基建 MVP</title>
+  <title>城乡基建 · 正式版</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="is-setup">
   <header class="topbar">
     <div>
       <h1>城乡基建</h1>
-      <p>本地最小可行版本 · 严格等概率最短路径 DP</p>
+      <p>城市与乡村之间的道路、桥梁与商路争夺战</p>
     </div>
-    <button id="newGameTopBtn" class="ghost">重新开局</button>
+    <div class="topbar-actions">
+      <button id="rulesBtn" class="ghost">规则介绍</button>
+      <button id="catalogBtn" class="ghost">卡牌图鉴</button>
+      <button id="newGameTopBtn" class="ghost">重新开始</button>
+    </div>
   </header>
 
   <main class="layout">
     <section class="board-panel">
       <div id="setupPanel" class="card setup-card">
-        <h2>城乡基建</h2>
-        <p class="setup-intro">请选择本地多人轮流模式。每局都会自动生成新的地图与随机流程。</p>
-        <h3 class="setup-subtitle">本地多人轮流游玩</h3>
-        <label>玩家人数
-          <select id="playerCountInput">
-            <option value="2">2 人</option>
-            <option value="3">3 人</option>
-            <option value="4">4 人</option>
-          </select>
-        </label>
-        <div id="playerNameInputs"></div>
-        <button id="createGameBtn" class="primary setup-start">开始本地新游戏</button>
+        <div class="setup-hero">
+          <span class="eyebrow">INFRASTRATION · FINAL EDITION</span>
+          <h2>建设你的城乡商路</h2>
+          <p class="setup-intro">在随机生成的城市—乡村地图上建设道路与桥梁，让商人沿最短路径完成交易，并通过过路费成为最终赢家。</p>
+        </div>
+        <div class="mode-tabs" role="tablist" aria-label="游戏模式">
+          <button id="localModeBtn" class="mode-tab active" data-mode="local">本地模式</button>
+          <button id="onlineModeBtn" class="mode-tab" data-mode="online">线上模式</button>
+        </div>
+        <div id="localSetupContent">
+          <h3 class="setup-subtitle">本地多人轮流游玩</h3>
+          <p class="small">所有玩家共用当前浏览器，按回合轮流操作。适合面对面游玩和规则学习。</p>
+          <label>玩家人数
+            <select id="playerCountInput">
+              <option value="2">2 人</option>
+              <option value="3">3 人</option>
+              <option value="4">4 人</option>
+            </select>
+          </label>
+          <div id="playerNameInputs"></div>
+          <button id="createGameBtn" class="primary setup-start">开始本地新游戏</button>
+        </div>
+        <div id="onlineSetupContent" class="online-setup hidden">
+          <div class="online-grid">
+            <form id="createRoomForm" class="sub-card">
+              <h3>创建房间</h3>
+              <label>房间名称<input name="roomName" maxlength="24" value="城乡基建房间" /></label>
+              <label>你的名称<input name="playerName" maxlength="18" value="玩家1" /></label>
+              <label>房间人数
+                <select name="playerCount">
+                  <option value="2">2 人</option>
+                  <option value="3">3 人</option>
+                  <option value="4">4 人</option>
+                </select>
+              </label>
+              <button class="primary wide" type="submit">创建线上房间</button>
+            </form>
+            <div class="sub-card">
+              <div class="room-list-title"><h3>房间列表</h3><button id="refreshRoomsBtn" type="button">刷新</button></div>
+              <div id="roomsList" class="rooms"><p class="small">点击刷新查看当前房间。</p></div>
+            </div>
+          </div>
+          <p class="small online-note">线上模式需要使用 <code>npm run serve</code> 启动房间服务器。房间状态会通过 SSE 实时同步，并支持断线重连。</p>
+        </div>
+        <div class="setup-links">
+          <button id="setupRulesBtn" class="link-button" type="button">先看规则</button>
+          <button id="setupCatalogBtn" class="link-button" type="button">查看四种建设卡</button>
+        </div>
       </div>
+
+      <div id="onlineRoomPanel" class="card online-room-card hidden"></div>
 
       <div class="card board-card">
         <div class="board-title">
@@ -47,17 +89,14 @@
         <h2>当前状态</h2>
         <div id="statusPanel"></div>
       </section>
-
       <section class="card">
         <h2>操作</h2>
         <div id="actionPanel"></div>
       </section>
-
       <section class="card">
         <h2>玩家</h2>
         <div id="playersPanel"></div>
       </section>
-
       <section class="card log-card">
         <h2>日志</h2>
         <div id="logPanel"></div>
@@ -65,7 +104,7 @@
     </aside>
   </main>
 
+  <div id="modalRoot"></div>
   <script type="module" src="./src/app.js"></script>
 </body>
 </html>
-
