@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "test": "node tests/game.test.js && node tests/server.test.js",
-    "serve": "node server.js"
+    "serve": "node server.js",
+    "cf:build": "node scripts/build-cloudflare.mjs",
+    "deploy:cloudflare": "npm run cf:build && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.118.0"
   }
 }

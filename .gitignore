@@ -5,3 +5,7 @@
 .env.*
 dist/
 coverage/
+public/
+.wrangler/
+handle-action.txt
+chunk-*.txt

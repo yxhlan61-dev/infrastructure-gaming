@@ -1,0 +1,16 @@
+﻿name = "infrastration-gaming"
+main = "worker/index.js"
+compatibility_date = "2026-08-02"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[durable_objects.bindings]]
+name = "GAME_LOBBY"
+class_name = "GameLobby"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameLobby"]
