@@ -712,3 +712,39 @@ body:not(.is-setup) .setup-card {
   .setup-links { flex-wrap: wrap; }
   .modal-dialog { padding: 17px; }
 }
+
+
+/* Online game cleanup layout: keep the live room controls out of the board area. */
+.topbar .danger {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: rgba(255,255,255,.35);
+}
+.player-name .player-connection {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 900;
+}
+.player-connection.online {
+  color: #166534;
+  background: #dcfce7;
+}
+.player-connection.offline {
+  color: #991b1b;
+  background: #fee2e2;
+}
+.online-room-card.online-room-chat-only {
+  order: 10;
+  padding: 12px;
+}
+.online-room-card.online-room-chat-only .online-chat {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.online-room-card.online-room-chat-only .chat-messages {
+  max-height: 120px;
+}

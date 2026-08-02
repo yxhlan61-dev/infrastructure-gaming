@@ -2,6 +2,7 @@ import { GameEngine, PHASE } from '../src/game.js';
 
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const WAITING_DISCONNECTED_TTL_MS = 10 * 60 * 1000;
+const PLAYING_DISCONNECTED_TTL_MS = 60 * 1000;
 const GAME_OVER_TTL_MS = 30 * 60 * 1000;
 const MAX_BODY_BYTES = 1024 * 1024;
 const encoder = new TextEncoder();
@@ -294,13 +295,23 @@ export class GameLobby {
       if (!occupiedSeats(room).length && ![...room.clients.values()].some(item => item.spectator)) {
         this.closeRoomSubscribers(room);
         this.rooms.delete(room.id);
-        return;
+        return { closed: true };
       }
-    } else {
-      client.connected = false;
-      roomNotice(room, 'system', `${client.playerName} disconnected; they can reconnect later.`);
+      return { closed: false };
     }
+    if (client.spectator) {
+      room.clients.delete(client.clientToken);
+      roomNotice(room, 'system', `${client.playerName} left spectator mode.`);
+      return { closed: false };
+    }
+    client.connected = false;
+    roomNotice(room, 'system', `${client.playerName} left the game; the room is now closed.`);
+    this.broadcast(room);
+    this.closeRoomSubscribers(room);
+    this.rooms.delete(room.id);
+    return { closed: true };
   }
+
 
   kickPlayer(room, hostToken, playerIndex) {
     const host = ensureClient(room, hostToken);
@@ -507,9 +518,11 @@ export class GameLobby {
     let changed = false;
     for (const [id, room] of this.rooms) {
       const age = current - Date.parse(room.updatedAt);
+      const hasConnected = [...room.clients.values()].some(client => client.connected);
       const staleGameOver = room.status === 'game_over' && age > GAME_OVER_TTL_MS;
-      const staleWaiting = room.status === 'waiting' && ![...room.clients.values()].some(client => client.connected) && age > WAITING_DISCONNECTED_TTL_MS;
-      if (staleGameOver || staleWaiting || age > ROOM_TTL_MS) {
+      const staleWaiting = room.status === 'waiting' && !hasConnected && age > WAITING_DISCONNECTED_TTL_MS;
+      const stalePlaying = room.status === 'playing' && !hasConnected && age > PLAYING_DISCONNECTED_TTL_MS;
+      if (staleGameOver || staleWaiting || stalePlaying || age > ROOM_TTL_MS) {
         this.closeRoomSubscribers(room);
         this.rooms.delete(id);
         changed = true;
@@ -589,9 +602,9 @@ export class GameLobby {
         return json(200, { clientToken: joined.clientToken, room: publicRoom(room, joined.clientToken) });
       }
       if (parts[3] === 'leave') {
-        this.leaveRoom(room, body.clientToken);
+        const result = this.leaveRoom(room, body.clientToken);
         await this.persist();
-        this.broadcast(room);
+        if (!result?.closed) this.broadcast(room);
         return json(200, { ok: true });
       }
       if (parts[3] === 'ready') {
@@ -631,7 +644,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
-      const id = env.GAME_LOBBY.idFromName('main-lobby-v3');
+      const id = env.GAME_LOBBY.idFromName('main-lobby-v4');
       return env.GAME_LOBBY.get(id).fetch(request);
     }
     return env.ASSETS.fetch(request);

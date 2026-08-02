@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = Number(process.env.PORT || 5173);
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const WAITING_DISCONNECTED_TTL_MS = 10 * 60 * 1000;
+const PLAYING_DISCONNECTED_TTL_MS = 60 * 1000;
 const GAME_OVER_TTL_MS = 30 * 60 * 1000;
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -322,12 +323,22 @@ function leaveRoom(room, clientToken) {
     if (!occupiedSeats(room).length) rooms.delete(room.id);
     return;
   }
+  if (client.spectator) {
+    room.clients.delete(client.clientToken);
+    roomNotice(room, 'system', `${client.playerName} 离开了观战。`);
+    touch(room);
+    broadcast(room);
+    return;
+  }
   client.connected = false;
   client.lastSeen = Date.now();
-  roomNotice(room, 'system', `${client.playerName} 暂时离开，重新打开房间可恢复连接。`);
+  roomNotice(room, 'system', `${client.playerName} 退出了游戏，房间已关闭。`);
   touch(room);
   broadcast(room);
+  closeRoomSubscribers(room);
+  rooms.delete(room.id);
 }
+
 
 function kickPlayer(room, hostToken, playerIndex) {
   const host = ensureClient(room, hostToken);
@@ -609,13 +620,18 @@ function cleanupRooms() {
       rooms.delete(id);
       continue;
     }
+    const hasConnected = [...room.clients.values()].some(client => client.connected);
     if (room.status === 'waiting') {
-      const hasConnected = [...room.clients.values()].some(client => client.connected);
       if (!hasConnected && age > WAITING_DISCONNECTED_TTL_MS) {
         closeRoomSubscribers(room);
         rooms.delete(id);
         continue;
       }
+    }
+    if (room.status === 'playing' && !hasConnected && age > PLAYING_DISCONNECTED_TTL_MS) {
+      closeRoomSubscribers(room);
+      rooms.delete(id);
+      continue;
     }
     if (age > ROOM_TTL_MS) {
       closeRoomSubscribers(room);

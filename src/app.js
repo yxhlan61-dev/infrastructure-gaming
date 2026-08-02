@@ -776,11 +776,21 @@ function renderPlayers() {
     return;
   }
   const s = engine.state;
+  const onlineSeatByPlayerId = new Map();
+  if (isOnline()) {
+    (online.room?.seats || []).forEach((seat, index) => {
+      onlineSeatByPlayerId.set(`P${index + 1}`, seat);
+    });
+  }
   playersPanel.innerHTML = s.playerOrder.map(id => {
     const p = s.players[id];
     const current = (s.phase === PHASE.PRE_BUILD && engine.preBuildPlayerId === id) || (s.phase === PHASE.PLAYER_TURN && engine.currentPlayerId === id);
+    const seat = onlineSeatByPlayerId.get(id);
+    const onlineBadge = seat
+      ? `<em class="player-connection ${seat.connected ? 'online' : 'offline'}">${seat.connected ? '在线' : '离线'}</em>`
+      : '';
     return `<div class="player-row ${current ? 'current-player' : ''}">
-      <span class="player-name"><i class="color-dot" style="background:${p.color}"></i>${htmlEscape(p.name)}</span>
+      <span class="player-name"><i class="color-dot" style="background:${p.color}"></i>${htmlEscape(p.name)}${onlineBadge}</span>
       <span>${p.tollMoney}$ · 路 ${engine.getPlayerRoadCount(id)} · 桥 ${engine.getPlayerBridgeCount(id)}</span>
     </div>`;
   }).join('');
@@ -1345,12 +1355,13 @@ function renderSetupMode() {
       const full = room.occupied >= room.playerCount;
       const canJoin = room.status === 'waiting' && !full;
       const action = canJoin
-        ? `<button type="button" data-room-action="join" data-room-id="${htmlEscape(room.id)}">??</button>`
+        ? `<button type="button" data-room-action="join" data-room-id="${htmlEscape(room.id)}">加入</button>`
         : room.status === 'waiting'
-          ? '<button type="button" disabled>??</button>'
-          : `<button type="button" data-room-action="spectate" data-room-id="${htmlEscape(room.id)}">??</button>`;
+          ? '<button type="button" disabled>已满</button>'
+          : `<button type="button" data-room-action="spectate" data-room-id="${htmlEscape(room.id)}">观战</button>`;
+      const connectedCount = (room.seats || []).filter(seat => seat.occupied && seat.connected).length;
       return `<div class="room-item">
-        <div><b>${htmlEscape(room.name)}</b><p>${htmlEscape(room.id)} ? ${onlinePhaseLabel(room.status)} ? ${room.occupied}/${room.playerCount} ?</p></div>
+        <div><b>${htmlEscape(room.name)}</b><p>${htmlEscape(room.id)} · ${onlinePhaseLabel(room.status)} · ${room.occupied}/${room.playerCount} 人 · 在线 ${connectedCount}</p></div>
         ${action}
       </div>`;
     }).join('')
@@ -1364,6 +1375,7 @@ function renderOnlineRoomPanel() {
   const room = online?.room;
   if (!room || !room.viewer) {
     onlineRoomPanel.classList.add('hidden');
+    onlineRoomPanel.classList.remove('online-room-chat-only');
     onlineRoomPanel.innerHTML = '';
     return;
   }
@@ -1371,41 +1383,42 @@ function renderOnlineRoomPanel() {
   const viewer = room.viewer;
   const seats = room.seats || [];
   const connectedLabel = online.connected ? '在线同步' : '正在重连（可继续查看最近状态）';
-  const seatHtml = seats.map(seat => {
-    const status = seat.occupied
-      ? `${seat.connected ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}`
-      : '空座位';
-    const kick = viewer.isHost && seat.occupied && !seat.isHost && room.status === 'waiting'
-      ? `<button type="button" class="mini-button danger" data-kick-index="${seat.index}">移出</button>`
-      : '';
-    return `<div class="online-seat ${seat.occupied ? 'occupied' : ''}">
-      <span><b>${seat.occupied ? htmlEscape(seat.name) : `座位 ${seat.index + 1}`}</b><small>${status}</small></span>
-      ${seat.isHost && seat.occupied ? '<strong title="房主">房主</strong>' : kick}
-    </div>`;
-  }).join('');
-  const roomActions = room.status === 'waiting'
-    ? `<div class="online-room-actions">
+  const chatHtml = (room.chat || []).map(item => `<p><b>${htmlEscape(item.sender)}：</b>${htmlEscape(item.message)}</p>`).join('') || '<p class="small">还没有聊天消息。</p>';
+  const chatPanel = `<div class="online-chat"><h3>房间聊天</h3><div class="chat-messages" id="onlineChatMessages">${chatHtml}</div>
+    <form id="onlineChatForm"><input name="message" maxlength="300" autocomplete="off" placeholder="输入消息……" /><button class="primary" type="submit">发送</button></form>
+  </div>`;
+
+  if (room.status !== 'waiting') {
+    onlineRoomPanel.classList.add('online-room-chat-only');
+    onlineRoomPanel.innerHTML = chatPanel;
+  } else {
+    onlineRoomPanel.classList.remove('online-room-chat-only');
+    const seatHtml = seats.map(seat => {
+      const status = seat.occupied
+        ? `${seat.connected ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}`
+        : '空座位';
+      const kick = viewer.isHost && seat.occupied && !seat.isHost
+        ? `<button type="button" class="mini-button danger" data-kick-index="${seat.index}">移出</button>`
+        : '';
+      return `<div class="online-seat ${seat.occupied ? 'occupied' : ''}">
+        <span><b>${seat.occupied ? htmlEscape(seat.name) : `座位 ${seat.index + 1}`}</b><small>${status}</small></span>
+        ${seat.isHost && seat.occupied ? '<strong title="房主">房主</strong>' : kick}
+      </div>`;
+    }).join('');
+    const roomActions = `<div class="online-room-actions">
         ${!viewer.spectator && !viewer.isHost ? `<button id="onlineReadyBtn" class="${viewer.ready ? '' : 'primary'}" type="button">${viewer.ready ? '取消准备' : '准备'}</button>` : ''}
         ${viewer.isHost ? '<button id="onlineStartBtn" class="primary" type="button">开始游戏</button>' : ''}
         <button id="onlineLeaveBtn" type="button">离开房间</button>
-      </div>`
-    : `<div class="online-room-actions"><button id="onlineLeaveBtn" type="button">${room.status === 'game_over' ? '关闭房间面板' : '离开房间'}</button></div>`;
-  const stateLine = room.status === 'waiting'
-    ? '房间坐满后，所有非房主玩家准备，房主即可开始。'
-    : room.game
-      ? `当前阶段：${room.game.phase === PHASE.PRE_BUILD ? '开局预建设' : room.game.phase === PHASE.PLAYER_TURN ? '正式回合' : '游戏结束'}`
-      : onlinePhaseLabel(room.status);
-  const chatHtml = (room.chat || []).map(item => `<p><b>${htmlEscape(item.sender)}：</b>${htmlEscape(item.message)}</p>`).join('') || '<p class="small">还没有聊天消息。</p>';
-  onlineRoomPanel.innerHTML = `<div class="online-room-head">
-    <div><h2>${htmlEscape(room.name)}</h2><div class="small">房间号 <code>${htmlEscape(room.id)}</code> · ${onlinePhaseLabel(room.status)}</div></div>
-    <div class="small">${connectedLabel}</div>
-  </div>
-  <div class="online-seats">${seatHtml}</div>
-  <div class="online-game-state">${stateLine}</div>
-  ${roomActions}
-  <div class="online-chat"><h3>房间聊天</h3><div class="chat-messages" id="onlineChatMessages">${chatHtml}</div>
-    <form id="onlineChatForm"><input name="message" maxlength="300" autocomplete="off" placeholder="输入消息……" /><button class="primary" type="submit">发送</button></form>
-  </div>`;
+      </div>`;
+    onlineRoomPanel.innerHTML = `<div class="online-room-head">
+      <div><h2>${htmlEscape(room.name)}</h2><div class="small">房间号 <code>${htmlEscape(room.id)}</code> · ${onlinePhaseLabel(room.status)}</div></div>
+      <div class="small">${connectedLabel}</div>
+    </div>
+    <div class="online-seats">${seatHtml}</div>
+    <div class="online-game-state">房间坐满后，所有非房主玩家准备，房主即可开始。</div>
+    ${roomActions}
+    ${chatPanel}`;
+  }
 
   document.getElementById('onlineReadyBtn')?.addEventListener('click', () => setOnlineReady(!viewer.ready));
   document.getElementById('onlineStartBtn')?.addEventListener('click', () => startOnlineRoom());
@@ -1702,8 +1715,18 @@ function renderActions() {
   actionPanel.innerHTML = `<p>${htmlEscape(hintText())}</p>`;
 }
 
+function updateTopbarActionButton() {
+  if (!newGameTopBtn) return;
+  const inOnlineRoom = Boolean(online?.roomId);
+  newGameTopBtn.textContent = inOnlineRoom ? '退出房间' : '重新开始';
+  newGameTopBtn.classList.toggle('danger', inOnlineRoom);
+  newGameTopBtn.title = inOnlineRoom ? '退出当前线上房间' : '回到开始界面';
+}
+
+
 function render() {
   document.body.classList.toggle('is-setup', !engine);
+  updateTopbarActionButton();
   renderSetupMode();
   renderOnlineRoomPanel();
   renderBoard();
@@ -1932,7 +1955,10 @@ function installFormalEditionHandlers() {
     uiMode = { type: 'IDLE' };
     render();
   });
-  newGameTopBtn?.addEventListener('click', localResetToSetup);
+  newGameTopBtn?.addEventListener('click', () => {
+    if (online?.roomId) leaveOnlineRoom();
+    else localResetToSetup();
+  });
   localModeBtn?.addEventListener('click', () => { setupMode = 'local'; render(); });
   onlineModeBtn?.addEventListener('click', () => { setupMode = 'online'; render(); refreshRooms(); });
   document.getElementById('refreshRoomsBtn')?.addEventListener('click', refreshRooms);
