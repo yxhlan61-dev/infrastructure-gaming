@@ -1,4 +1,4 @@
-﻿import { GameEngine, PHASE } from '../src/game.js';
+import { GameEngine, PHASE } from '../src/game.js';
 
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const WAITING_DISCONNECTED_TTL_MS = 10 * 60 * 1000;
@@ -631,7 +631,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
-      const id = env.GAME_LOBBY.idFromName('global');
+      const id = env.GAME_LOBBY.idFromName('main-lobby-v3');
       return env.GAME_LOBBY.get(id).fetch(request);
     }
     return env.ASSETS.fetch(request);
