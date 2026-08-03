@@ -667,7 +667,7 @@ function renderDiceDisplay(state) {
   const g = el('g', {
     class: 'dice-panel',
     'data-nonce': nonce,
-    transform: mobile ? 'translate(10 556)' : 'translate(790 190)',
+    transform: mobile ? 'translate(95 556) scale(.5)' : 'translate(790 190)',
   });
   const panelWidth = mobile ? 340 : 125;
   const panelHeight = mobile ? 168 : 205;
