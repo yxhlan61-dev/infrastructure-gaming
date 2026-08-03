@@ -678,17 +678,18 @@ function renderDiceDisplay(state) {
   const die2Class = state.lastDie2 ? 'die-face die-animate' : 'die-face die-empty';
   const dieWidth = mobile ? 100 : 70;
   const dieHeight = mobile ? 82 : 70;
-  const dieY = mobile ? 42 : 48;
+  const die1Y = mobile ? 42 : 48;
+  const die2Y = mobile ? 42 : 132;
   const die1X = mobile ? 42 : 28;
   const die2X = mobile ? 198 : 28;
   const labelY = mobile ? 103 : 94;
-  const die1 = el('g', { class: die1Class, transform: `translate(${die1X} ${dieY})` });
+  const die1 = el('g', { class: die1Class, transform: `translate(${die1X} ${die1Y})` });
   die1.appendChild(el('rect', { x: 0, y: 0, width: dieWidth, height: dieHeight, rx: mobile ? 12 : 14 }));
   die1.appendChild(svgText(state.lastDie1 ?? '-', { x: dieWidth / 2, y: mobile ? 43 : 38, class: 'die-number' }));
   die1.appendChild(svgText('\u7b2c\u4e00\u9ab0', { x: dieWidth / 2, y: labelY, class: 'die-label' }));
   g.appendChild(die1);
 
-  const die2 = el('g', { class: die2Class, transform: `translate(${die2X} ${dieY})` });
+  const die2 = el('g', { class: die2Class, transform: `translate(${die2X} ${die2Y})` });
   die2.appendChild(el('rect', { x: 0, y: 0, width: dieWidth, height: dieHeight, rx: mobile ? 12 : 14 }));
   die2.appendChild(svgText(state.lastDie2 ?? '-', { x: dieWidth / 2, y: mobile ? 43 : 38, class: 'die-number' }));
   die2.appendChild(svgText('\u7b2c\u4e8c\u9ab0', { x: dieWidth / 2, y: labelY, class: 'die-label' }));
