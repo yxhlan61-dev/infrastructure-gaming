@@ -748,3 +748,58 @@ body:not(.is-setup) .setup-card {
 .online-room-card.online-room-chat-only .chat-messages {
   max-height: 120px;
 }
+
+
+/* Phone board composition: the 6-by-6 map fills the viewport width. Supporting
+   information stays above/below it, while desktop keeps the original side layout. */
+@media (max-width: 720px) {
+  body:not(.is-setup) {
+    overflow-x: hidden;
+  }
+
+  body:not(.is-setup) .layout {
+    gap: 14px;
+    padding: 0;
+  }
+
+  body:not(.is-setup) .board-panel {
+    gap: 0;
+  }
+
+  body:not(.is-setup) .board-card {
+    min-height: auto;
+    padding: 12px 0 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  body:not(.is-setup) .board-title,
+  body:not(.is-setup) .board-card .hint {
+    margin-right: 14px;
+    margin-left: 14px;
+  }
+
+  body:not(.is-setup) #gameBoard {
+    width: 100vw;
+    max-width: none;
+    min-height: 0;
+    height: auto;
+    aspect-ratio: 360 / 740;
+    margin: 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  body:not(.is-setup) .side-panel {
+    gap: 12px;
+    padding: 0 14px 14px;
+  }
+
+  /* Mobile reading order: actions first, then players, then current status. */
+  body:not(.is-setup) .side-panel > section:nth-child(1) { order: 3; }
+  body:not(.is-setup) .side-panel > section:nth-child(2) { order: 1; }
+  body:not(.is-setup) .side-panel > section:nth-child(3) { order: 2; }
+  body:not(.is-setup) .side-panel > section:nth-child(4) { order: 4; }
+}

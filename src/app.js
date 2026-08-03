@@ -46,8 +46,21 @@ let onlineReconnectTimer = null;
 let onlineRequestBusy = false;
 let lastOnlineError = '';
 
-const POS = { xMargin: 250, yMargin: 60, step: 100 };
-const LEFT_PANEL = { x: -115, width: 230 };
+const DESKTOP_POS = { xMargin: 250, yMargin: 60, step: 100 };
+const DESKTOP_LEFT_PANEL = { x: -115, width: 230 };
+const MOBILE_POS = { xMargin: 30, yMargin: 210, step: 60 };
+const MOBILE_LEFT_PANEL = { x: 180, width: 170 };
+let POS = { ...DESKTOP_POS };
+let LEFT_PANEL = { ...DESKTOP_LEFT_PANEL };
+let mobileBoardLayout = false;
+
+function applyBoardLayout() {
+  const nextMobile = window.matchMedia?.('(max-width: 720px)').matches ?? false;
+  POS = { ...(nextMobile ? MOBILE_POS : DESKTOP_POS) };
+  LEFT_PANEL = { ...(nextMobile ? MOBILE_LEFT_PANEL : DESKTOP_LEFT_PANEL) };
+  mobileBoardLayout = nextMobile;
+  svg.setAttribute('viewBox', nextMobile ? '0 0 360 740' : '-130 0 1060 620');
+}
 function point(node) {
   // The visual map uses the first quadrant: col is x (rightward), row is y (upward).
   return { x: POS.xMargin + (node.col - 1) * POS.step, y: POS.yMargin + (6 - node.row) * POS.step };
@@ -360,6 +373,23 @@ function renderMerchantOverlay(nodes, currentMerchant) {
   const boxX = LEFT_PANEL.x;
   const boxW = LEFT_PANEL.width;
   const boxCx = boxX + boxW / 2;
+  if (mobileBoardLayout) {
+    // On phones, keep merchant information above the square map so the board
+    // can use the full viewport width instead of being squeezed by sidebars.
+    svg.appendChild(el('rect', { x: boxX, y: 12, width: boxW, height: 48, rx: 10, class: 'merchant-info-box' }));
+    svg.appendChild(svgMultilineText([
+      `${merchantType}\u6cbf\u6700\u77ed\u8def\u5f84\u4ea4\u6613`,
+      `\u9053\u8def ${roadFee}$ / \u6bb5 \u00b7 \u6865\u6881 ${bridgeFee}$ / \u5ea7`,
+    ], { x: boxCx, y: 30, class: 'merchant-info-text' }, 14));
+    svg.appendChild(el('rect', { x: boxX, y: 66, width: boxW, height: 48, rx: 10, class: 'merchant-route-box' }));
+    svg.appendChild(svgText('\u5f53\u524d\u5546\u4eba\u8def\u7ebf', { x: boxCx, y: 85, class: 'merchant-route-title' }));
+    svg.appendChild(svgText(routeLabel(currentMerchant.startNodeId, currentMerchant.endNodeId), { x: boxCx, y: 104, class: 'merchant-route-text' }));
+    svg.appendChild(el('rect', { x: boxX, y: 120, width: boxW, height: 42, rx: 10, class: 'final-route-box' }));
+    svg.appendChild(svgText('\u6700\u540e\u4e00\u4e2a\u5927\u5546\u4eba\u56fa\u5b9a\u8def\u7ebf', { x: boxCx, y: 137, class: 'final-route-title' }));
+    svg.appendChild(svgText(routeLabel('r6c6', 'r1c1'), { x: boxCx, y: 153, class: 'final-route-text' }));
+    return;
+  }
+
   svg.appendChild(el('rect', { x: boxX, y: 92, width: boxW, height: 114, rx: 14, class: 'merchant-info-box' }));
   svg.appendChild(svgMultilineText([
     `${merchantType}\u4f1a\u6cbf\u7740\u6700\u77ed\u8def\u5f84\u8fdb\u884c\u4ea4\u6613`,
@@ -598,11 +628,11 @@ function drawRiverCurve(nodes, edges) {
 }
 
 function renderBuildLegend() {
-  const x = LEFT_PANEL.x;
-  const y = 380;
-  const w = LEFT_PANEL.width;
+  const x = mobileBoardLayout ? 10 : LEFT_PANEL.x;
+  const y = mobileBoardLayout ? 12 : 380;
+  const w = mobileBoardLayout ? 160 : LEFT_PANEL.width;
   const cx = x + w / 2;
-  svg.appendChild(el('rect', { x, y, width: w, height: 150, rx: 14, class: 'map-legend-box' }));
+  svg.appendChild(el('rect', { x, y, width: w, height: 150, rx: mobileBoardLayout ? 10 : 14, class: 'map-legend-box' }));
   svg.appendChild(svgText('\u9053\u8def / \u6865\u6881\u56fe\u4f8b', { x: cx, y: y + 28, class: 'map-legend-title' }));
 
   svg.appendChild(el('line', { x1: x + 28, y1: y + 60, x2: x + 104, y2: y + 60, class: 'map-legend-road' }));
@@ -633,27 +663,41 @@ function renderMerchantTraveller() {
 
 function renderDiceDisplay(state) {
   const nonce = state.diceAnimationNonce || 0;
-  const g = el('g', { class: 'dice-panel', 'data-nonce': nonce, transform: 'translate(790 190)' });
-  g.appendChild(el('rect', { x: 0, y: 0, width: 125, height: 205, rx: 18, class: 'dice-panel-bg' }));
-  g.appendChild(svgText('骰子点数', { x: 62, y: 30, class: 'dice-title' }));
+  const mobile = mobileBoardLayout;
+  const g = el('g', {
+    class: 'dice-panel',
+    'data-nonce': nonce,
+    transform: mobile ? 'translate(10 556)' : 'translate(790 190)',
+  });
+  const panelWidth = mobile ? 340 : 125;
+  const panelHeight = mobile ? 168 : 205;
+  g.appendChild(el('rect', { x: 0, y: 0, width: panelWidth, height: panelHeight, rx: mobile ? 14 : 18, class: 'dice-panel-bg' }));
+  g.appendChild(svgText('\u9ab0\u5b50\u70b9\u6570', { x: mobile ? 170 : 62, y: mobile ? 27 : 30, class: 'dice-title' }));
 
   const die1Class = state.lastDie1 ? 'die-face die-animate' : 'die-face die-empty';
   const die2Class = state.lastDie2 ? 'die-face die-animate' : 'die-face die-empty';
-  const die1 = el('g', { class: die1Class, transform: 'translate(28 48)' });
-  die1.appendChild(el('rect', { x: 0, y: 0, width: 70, height: 70, rx: 14 }));
-  die1.appendChild(svgText(state.lastDie1 ?? '-', { x: 35, y: 38, class: 'die-number' }));
-  die1.appendChild(svgText('第一骰', { x: 35, y: 94, class: 'die-label' }));
+  const dieWidth = mobile ? 100 : 70;
+  const dieHeight = mobile ? 82 : 70;
+  const dieY = mobile ? 42 : 48;
+  const die1X = mobile ? 42 : 28;
+  const die2X = mobile ? 198 : 28;
+  const labelY = mobile ? 103 : 94;
+  const die1 = el('g', { class: die1Class, transform: `translate(${die1X} ${dieY})` });
+  die1.appendChild(el('rect', { x: 0, y: 0, width: dieWidth, height: dieHeight, rx: mobile ? 12 : 14 }));
+  die1.appendChild(svgText(state.lastDie1 ?? '-', { x: dieWidth / 2, y: mobile ? 43 : 38, class: 'die-number' }));
+  die1.appendChild(svgText('\u7b2c\u4e00\u9ab0', { x: dieWidth / 2, y: labelY, class: 'die-label' }));
   g.appendChild(die1);
 
-  const die2 = el('g', { class: die2Class, transform: 'translate(28 132)' });
-  die2.appendChild(el('rect', { x: 0, y: 0, width: 70, height: 70, rx: 14 }));
-  die2.appendChild(svgText(state.lastDie2 ?? '-', { x: 35, y: 38, class: 'die-number' }));
-  die2.appendChild(svgText('第二骰', { x: 35, y: 94, class: 'die-label' }));
+  const die2 = el('g', { class: die2Class, transform: `translate(${die2X} ${dieY})` });
+  die2.appendChild(el('rect', { x: 0, y: 0, width: dieWidth, height: dieHeight, rx: mobile ? 12 : 14 }));
+  die2.appendChild(svgText(state.lastDie2 ?? '-', { x: dieWidth / 2, y: mobile ? 43 : 38, class: 'die-number' }));
+  die2.appendChild(svgText('\u7b2c\u4e8c\u9ab0', { x: dieWidth / 2, y: labelY, class: 'die-label' }));
   g.appendChild(die2);
   svg.appendChild(g);
 }
 
 function renderBoard() {
+  applyBoardLayout();
   svg.innerHTML = '';
   if (!engine) return;
   const { nodes, edges, players, currentMerchant, lastMerchantPath } = engine.state;
@@ -1979,3 +2023,5 @@ function installFormalEditionHandlers() {
 installFormalEditionHandlers();
 render();
 if (online?.roomId && online?.clientToken) reconnectOnlineSession();
+
+window.addEventListener('resize', () => { if (engine) renderBoard(); });
