@@ -134,6 +134,7 @@ function publicRoom(room, clientToken = '') {
     secondDieBaseNodeId: room.secondDieBaseNodeId,
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
+    revision: Number(room.revision) || 0,
     seats: room.seats.map(seat => {
       const client = seat.clientToken ? room.clients.get(seat.clientToken) : null;
       return {
@@ -180,11 +181,15 @@ function roomListItem(room) {
     updatedAt: room.updatedAt,
   };
 }
-function touch(room) { room.updatedAt = nowIso(); }
+function touch(room) {
+  room.updatedAt = nowIso();
+  room.revision = (Number(room.revision) || 0) + 1;
+}
 
 function hydrateRoom(data) {
   const room = {
     ...data,
+    revision: Number(data.revision) || 0,
     liveAction: data.liveAction || null,
     clients: new Map((data.clients || []).map(client => [client.clientToken, { ...client, connected: false }])),
     engine: data.engineState ? GameEngine.fromState(data.engineState) : null,
@@ -202,6 +207,7 @@ function serializeRoom(room) {
     hostClientToken: room.hostClientToken,
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
+    revision: Number(room.revision) || 0,
     seats: room.seats,
     clients: [...room.clients.values()].map(client => ({ ...client, connected: false })),
     engineState: room.engine?.state || null,
@@ -250,6 +256,7 @@ export class GameLobby {
       hostClientToken: hostToken,
       createdAt: nowIso(),
       updatedAt: nowIso(),
+      revision: 0,
       seats: Array.from({ length: count }, (_, index) => ({ index, name: '', clientToken: null })),
       clients: new Map(),
       engine: null,
@@ -412,7 +419,13 @@ export class GameLobby {
     const savePendingCardOptions = options => {
       engine.state.pendingCardOptions = { ...(engine.state.pendingCardOptions || {}), ...selectCardOptions(options) };
     };
-    const latestLogMessage = fallback => engine.state.log?.at(-1)?.message || fallback;
+    const latestLogMessage = (fallback, types = []) => {
+      const wanted = new Set(Array.isArray(types) ? types : [types]);
+      const entry = wanted.size
+        ? engine.state.log?.find(log => wanted.has(log.type))
+        : engine.state.log?.at(-1);
+      return entry?.message || fallback;
+    };
     const stepLabel = mode => ({
       CHOOSE_ACTION: 'choosing the action for this turn',
       SELECT_BASE_ROAD: 'choosing the base for action 2',
@@ -436,7 +449,7 @@ export class GameLobby {
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
       clearLiveAction(room);
-      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} completed the initial build`, latestLogMessage('initial road built'), { edgeId: payload.edgeId });
+      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} \u5b8c\u6210\u521d\u59cb\u5efa\u8bbe`, latestLogMessage('\u521d\u59cb\u9053\u8def\u5df2\u5efa\u8bbe', ['ROAD_BUILT']), { edgeId: payload.edgeId });
     } else if (type === 'startTurn') {
       ensurePlayerTurn(); ensureUnlocked();
       if (engine.state.lastDie1 !== null) throw new Error('the first die has already been rolled');
@@ -446,7 +459,7 @@ export class GameLobby {
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
       setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1 });
-      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} rolled the first die`, latestLogMessage(`first die: ${engine.state.lastDie1}`), { die1: engine.state.lastDie1 });
+      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} \u63b7\u51fa\u7b2c\u4e00\u9ab0`, latestLogMessage(`\u7b2c\u4e00\u9ab0\uff1a${engine.state.lastDie1}`, ['DICE_ROLLED']), { die1: engine.state.lastDie1 });
     } else if (type === 'syncActionStep') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
       if (engine.state.lastDie2 !== null) throw new Error('the second-die action has already started');
@@ -470,7 +483,7 @@ export class GameLobby {
       engine.buildFromBase(payload.baseNodeId, payload.edgeId);
       room.turnActionCommitted = true;
       clearLiveAction(room);
-      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} completed action 2`, latestLogMessage('road built'), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
+      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} \u5b8c\u6210\u884c\u52a82\u5efa\u8bbe`, latestLogMessage('\u9053\u8def\u5df2\u5efa\u8bbe', ['ROAD_BUILT']), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
     } else if (type === 'rollSecondDie' || type === 'rollSecondDieForBase') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
       if (engine.state.lastDie2 !== null) throw new Error('the second die has already been rolled');
@@ -487,7 +500,7 @@ export class GameLobby {
       if (result.candidates.length) setLiveAction(room, client, 'SELECT_EDGE_SECOND', { baseNodeId, candidateNodeIds: result.candidates });
       else if (result.die2 === engine.state.lastDie1) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: result.die2, cardAvailable: true });
       else clearLiveAction(room);
-      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} rolled the second die`, latestLogMessage(`second die: ${result.die2}`), { baseNodeId, die2: result.die2, candidates: result.candidates });
+      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} \u63b7\u51fa\u7b2c\u4e8c\u9ab0`, latestLogMessage(`\u7b2c\u4e8c\u9ab0\uff1a${result.die2}`, ['DICE_ROLLED', 'NO_EFFECT']), { baseNodeId, die2: result.die2, candidates: result.candidates });
     } else if (type === 'resolveSecondDieBuild') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
       if (engine.state.lastDie2 === null) throw new Error('roll the second die first');
@@ -499,7 +512,7 @@ export class GameLobby {
       room.turnActionCommitted = engine.state.lastDie2 !== engine.state.lastDie1;
       if (engine.state.lastDie2 === engine.state.lastDie1 && !room.turnActionCommitted) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: engine.state.lastDie2, cardAvailable: true });
       else clearLiveAction(room);
-      setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} completed the second-die build`, latestLogMessage(`second-die result: ${buildResult}`), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
+      setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} \u5b8c\u6210\u7b2c\u4e8c\u9ab0\u5efa\u8bbe`, latestLogMessage(`\u7b2c\u4e8c\u9ab0\u5efa\u8bbe\u7ed3\u679c\uff1a${buildResult}`, ['ROAD_BUILT', 'BRIDGE_BUILT', 'NO_EFFECT']), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
     } else if (type === 'drawCard') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie();
       if (engine.state.pendingCard) throw new Error('resolve the current card first');
@@ -519,7 +532,7 @@ export class GameLobby {
         engine.state.pendingCardOptions = {};
       }
       setPendingCardLiveAction(card, resolved);
-      setRoomFlash(room, client, 'CARD_DRAWN', `${client.playerName} drew ${cardName(card)}`, resolved.done ? (resolved.announcement || `card resolved: ${cardName(card)}`) : `next step: ${stepLabel(resolved.needs)}`, { card, ...resolved });
+      setRoomFlash(room, client, 'CARD_DRAWN', `${client.playerName} \u62bd\u5230\u5efa\u8bbe\u5361\uff1a${cardName(card)}`, resolved.done ? (resolved.announcement || `\u5efa\u8bbe\u5361\u5df2\u7ed3\u7b97\uff1a${cardName(card)}`) : `\u7b49\u5f85\u9009\u62e9\u76ee\u6807\uff1a${stepLabel(resolved.needs)}`, { card, ...resolved });
     } else if (type === 'resolveCard') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie();
       const card = engine.state.pendingCard;
@@ -537,7 +550,7 @@ export class GameLobby {
         savePendingCardOptions(options);
       }
       setPendingCardLiveAction(card, resolved, options);
-      setRoomFlash(room, client, resolved.done ? 'CARD_RESOLVED' : 'ACTION_STEP', resolved.done ? `${client.playerName} resolved ${cardName(card)}` : `${client.playerName} is resolving ${cardName(card)}`, resolved.done ? (resolved.announcement || 'card resolved') : stepLabel(resolved.needs), { card, options, ...resolved });
+      setRoomFlash(room, client, resolved.done ? 'CARD_RESOLVED' : 'ACTION_STEP', resolved.done ? `${client.playerName} \u7ed3\u7b97\u5efa\u8bbe\u5361\uff1a${cardName(card)}` : `${client.playerName} \u6b63\u5728\u7ed3\u7b97\u5efa\u8bbe\u5361\uff1a${cardName(card)}`, resolved.done ? (resolved.announcement || '\u5efa\u8bbe\u5361\u5df2\u7ed3\u7b97') : stepLabel(resolved.needs), { card, options, ...resolved });
     } else if (type === 'skipBuildRoad' || type === 'skipAction') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
       if (engine.state.lastDie2 !== null) throw new Error('the second-die action has already started');
@@ -547,7 +560,7 @@ export class GameLobby {
       room.turnActionCommitted = true;
       result = { type, skipped: true, reason: 'NO_EFFECT' };
       clearLiveAction(room);
-      setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} skipped the build`, latestLogMessage('no effect'));
+      setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} \u8df3\u8fc7\u884c\u52a8`, latestLogMessage('\u884c\u52a8\u65e0\u6548', ['NO_EFFECT']));
     } else if (type === 'finishTurn') {
       ensurePlayerTurn(); ensureFirstDie();
       if (engine.state.pendingCard) throw new Error('resolve the current card first');
@@ -633,6 +646,13 @@ export class GameLobby {
     const close = () => {
       if (sub) this.detachSubscriber(room, sub);
     };
+    if (!wasConnected) {
+      // Presence changed, so persist one new revision before the first
+      // snapshot. Reconnects for an already-online client do not invalidate
+      // every player's render tree.
+      touch(room);
+      await this.persist();
+    }
     const stream = new ReadableStream({
       start: controller => {
         sub = { controller, clientToken: token, closed: false, heartbeat: null };
@@ -647,7 +667,6 @@ export class GameLobby {
       },
       cancel: close,
     });
-    await this.mutate(room);
     if (!wasConnected && sub) this.broadcast(room, sub);
     return new Response(stream, {
       status: 200,
@@ -696,8 +715,8 @@ export class GameLobby {
       }
       if (parts[3] === 'leave') {
         const result = this.leaveRoom(room, body.clientToken);
-        await this.persist();
-        if (!result?.closed) this.broadcast(room);
+        if (!result?.closed) await this.mutate(room);
+        else await this.persist();
         return json(200, { ok: true });
       }
       if (parts[3] === 'ready') {

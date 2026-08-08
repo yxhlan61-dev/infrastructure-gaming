@@ -50,6 +50,7 @@ async function testWorkerPreBuildRoadAction() {
     body: { roomName: 'Worker prebuild', playerName: 'Alice', playerCount: 2 },
   });
   assertSuccess(created, 'creating a worker room should succeed');
+  assert.ok(Number.isInteger(created.data.room.revision) && created.data.room.revision >= 1, 'a newly published room should include a positive revision');
   const roomId = created.data.room.id;
   const aliceToken = created.data.clientToken;
 
@@ -58,6 +59,7 @@ async function testWorkerPreBuildRoadAction() {
     body: { playerName: 'Bob' },
   });
   assertSuccess(joined, 'joining a worker room should succeed');
+  assert.ok(joined.data.room.revision > created.data.room.revision, 'joining should publish a newer room revision');
   const bobToken = joined.data.clientToken;
 
   const ready = await api(env, `/api/rooms/${roomId}/ready`, {
@@ -71,6 +73,7 @@ async function testWorkerPreBuildRoadAction() {
     body: { clientToken: aliceToken },
   });
   assertSuccess(started, 'starting a worker room should succeed');
+  assert.ok(started.data.room.revision > ready.data.room.revision, 'starting should publish a newer room revision');
   assert.equal(started.data.room.game.phase, 'PRE_BUILD');
   assert.equal(started.data.room.game.preBuildIndex, 0);
 
@@ -81,6 +84,8 @@ async function testWorkerPreBuildRoadAction() {
     body: { clientToken: aliceToken, type: 'preBuildRoad', payload: { edgeId: edge.id } },
   });
   assertSuccess(built, `worker preBuildRoad should not fail: ${JSON.stringify(built.data)}`);
+  assert.ok(built.data.room.revision > started.data.room.revision, 'a pre-build road should publish a newer room revision');
+  assert.equal(built.data.room.flash.type, 'ROAD_BUILT', 'a pre-build road should be shared as a road-build flash');
   assert.equal(built.data.room.game.preBuildIndex, 1, 'the successful road build should advance pre-build to the next player');
   assert.equal(built.data.room.game.edges[edge.id].roadOwnerId, 'P1', 'the selected road should belong to the first player');
 
@@ -90,6 +95,7 @@ async function testWorkerPreBuildRoadAction() {
     body: { clientToken: bobToken, type: 'preBuildRoad', payload: { edgeId: bobEdge.id } },
   });
   assertSuccess(bobBuilt, 'the second player should be able to finish pre-build');
+  assert.ok(bobBuilt.data.room.revision > built.data.room.revision, 'each pre-build road should advance the room revision');
   assert.equal(bobBuilt.data.room.game.phase, 'PLAYER_TURN', 'pre-build should end after every player built once');
   assert.equal(bobBuilt.data.room.game.edges[bobEdge.id].roadOwnerId, 'P2');
 }

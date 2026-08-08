@@ -172,6 +172,7 @@ function publicRoom(room, clientToken = '') {
     secondDieBaseNodeId: room.secondDieBaseNodeId,
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
+    revision: Number(room.revision) || 0,
     seats: room.seats.map(seat => {
       const client = seat.clientToken ? room.clients.get(seat.clientToken) : null;
       return {
@@ -217,10 +218,14 @@ function roomListItem(room) {
     })),
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
+    revision: Number(room.revision) || 0,
   };
 }
 
-function touch(room) { room.updatedAt = nowIso(); }
+function touch(room) {
+  room.updatedAt = nowIso();
+  room.revision = (Number(room.revision) || 0) + 1;
+}
 
 function createRoom({ roomName, playerName, playerCount } = {}) {
   const count = Number(playerCount || 2);
@@ -236,6 +241,7 @@ function createRoom({ roomName, playerName, playerCount } = {}) {
     hostClientToken: hostToken,
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    revision: 0,
     seats: Array.from({ length: count }, (_, index) => ({ index, name: '', clientToken: null })),
     clients: new Map(),
     engine: null,
@@ -444,7 +450,13 @@ function handleAction(room, clientToken, body = {}) {
       ...selectCardOptions(options),
     };
   };
-  const latestLogMessage = fallback => engine.state.log?.at(-1)?.message || fallback;
+  const latestLogMessage = (fallback, types = []) => {
+    const wanted = new Set(Array.isArray(types) ? types : [types]);
+    const entry = wanted.size
+      ? engine.state.log?.find(log => wanted.has(log.type))
+      : engine.state.log?.at(-1);
+    return entry?.message || fallback;
+  };
   const stepLabel = mode => ({
     CHOOSE_ACTION: '正在选择本回合行动',
     SELECT_BASE_ROAD: '正在选择行动2的建设基地',
@@ -473,7 +485,7 @@ function handleAction(room, clientToken, body = {}) {
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
     clearLiveAction(room);
-    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} 完成初始建设`, latestLogMessage('初始道路已建设'), { edgeId: payload.edgeId });
+    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} \u5b8c\u6210\u521d\u59cb\u5efa\u8bbe`, latestLogMessage('\u521d\u59cb\u9053\u8def\u5df2\u5efa\u8bbe', ['ROAD_BUILT']), { edgeId: payload.edgeId });
   } else if (type === 'startTurn') {
     ensurePlayerTurn();
     ensureUnlocked();
@@ -484,7 +496,7 @@ function handleAction(room, clientToken, body = {}) {
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
     setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1 });
-    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} 掷出第一骰`, latestLogMessage(`第一骰：${engine.state.lastDie1}`), { die1: engine.state.lastDie1 });
+    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} \u63b7\u51fa\u7b2c\u4e00\u9ab0`, latestLogMessage(`\u7b2c\u4e00\u9ab0\uff1a${engine.state.lastDie1}`, ['DICE_ROLLED']), { die1: engine.state.lastDie1 });
   } else if (type === 'syncActionStep') {
     ensurePlayerTurn();
     ensureUnlocked();
@@ -514,7 +526,7 @@ function handleAction(room, clientToken, body = {}) {
     engine.buildFromBase(payload.baseNodeId, payload.edgeId);
     room.turnActionCommitted = true;
     clearLiveAction(room);
-    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} 完成行动2建设`, latestLogMessage('道路已建设'), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
+    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} \u5b8c\u6210\u884c\u52a82\u5efa\u8bbe`, latestLogMessage('\u9053\u8def\u5df2\u5efa\u8bbe', ['ROAD_BUILT']), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
   } else if (type === 'rollSecondDie' || type === 'rollSecondDieForBase') {
     ensurePlayerTurn();
     ensureUnlocked();
@@ -536,7 +548,7 @@ function handleAction(room, clientToken, body = {}) {
     if (result.candidates.length) setLiveAction(room, client, 'SELECT_EDGE_SECOND', { baseNodeId, candidateNodeIds: result.candidates });
     else if (result.die2 === engine.state.lastDie1) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: result.die2, cardAvailable: true });
     else clearLiveAction(room);
-    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} 掷出第二骰`, latestLogMessage(`第二骰：${result.die2}`), { baseNodeId, die2: result.die2, candidates: result.candidates });
+    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} \u63b7\u51fa\u7b2c\u4e8c\u9ab0`, latestLogMessage(`\u7b2c\u4e8c\u9ab0\uff1a${result.die2}`, ['DICE_ROLLED', 'NO_EFFECT']), { baseNodeId, die2: result.die2, candidates: result.candidates });
   } else if (type === 'resolveSecondDieBuild') {
     ensurePlayerTurn();
     ensureUnlocked();
@@ -551,7 +563,7 @@ function handleAction(room, clientToken, body = {}) {
     room.turnActionCommitted = engine.state.lastDie2 !== engine.state.lastDie1;
     if (engine.state.lastDie2 === engine.state.lastDie1 && !room.turnActionCommitted) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: engine.state.lastDie2, cardAvailable: true });
     else clearLiveAction(room);
-    setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} 完成第二骰建设`, latestLogMessage(`第二骰建设结果：${buildResult}`), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
+    setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} \u5b8c\u6210\u7b2c\u4e8c\u9ab0\u5efa\u8bbe`, latestLogMessage(`\u7b2c\u4e8c\u9ab0\u5efa\u8bbe\u7ed3\u679c\uff1a${buildResult}`, ['ROAD_BUILT', 'BRIDGE_BUILT', 'NO_EFFECT']), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
   } else if (type === 'drawCard') {
     ensurePlayerTurn();
     ensureUnlocked();
@@ -606,7 +618,7 @@ function handleAction(room, clientToken, body = {}) {
     room.turnActionCommitted = true;
     result = { type, skipped: true, reason: 'NO_EFFECT' };
     clearLiveAction(room);
-    setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} 跳过行动`, latestLogMessage('行动无效果'));
+    setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} \u8df3\u8fc7\u884c\u52a8`, latestLogMessage('\u884c\u52a8\u65e0\u6548', ['NO_EFFECT']));
   } else if (type === 'finishTurn') {
     ensurePlayerTurn();
     ensureFirstDie();
