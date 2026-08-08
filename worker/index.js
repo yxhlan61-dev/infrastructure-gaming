@@ -1,4 +1,4 @@
-import { GameEngine, PHASE } from '../src/game.js';
+import { GameEngine, PHASE, cardName } from '../src/game.js';
 
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const WAITING_DISCONNECTED_TTL_MS = 10 * 60 * 1000;
@@ -59,6 +59,31 @@ function roomChat(room, client, message) {
   });
   room.chat = room.chat.slice(-80);
 }
+
+function setRoomFlash(room, client, type, title, message, payload = {}) {
+  room.flash = {
+    id: randomId('F'),
+    type,
+    title,
+    message,
+    playerIndex: client?.playerIndex ?? null,
+    playerName: client?.playerName || '',
+    createdAt: nowIso(),
+    payload,
+  };
+}
+function setLiveAction(room, client, mode, payload = {}) {
+  room.liveAction = {
+    id: randomId('A'),
+    mode,
+    playerIndex: client?.playerIndex ?? null,
+    playerName: client?.playerName || '',
+    createdAt: nowIso(),
+    ...payload,
+  };
+}
+function clearLiveAction(room) { room.liveAction = null; }
+
 function occupiedSeats(room) { return room.seats.filter(seat => seat.clientToken); }
 function allReady(room) {
   return occupiedSeats(room).length === room.playerCount
@@ -133,6 +158,7 @@ function publicRoom(room, clientToken = '') {
     chat: room.chat,
     notices: room.notices,
     flash: room.flash,
+    liveAction: room.liveAction || null,
   };
 }
 function roomListItem(room) {
@@ -159,6 +185,7 @@ function touch(room) { room.updatedAt = nowIso(); }
 function hydrateRoom(data) {
   const room = {
     ...data,
+    liveAction: data.liveAction || null,
     clients: new Map((data.clients || []).map(client => [client.clientToken, { ...client, connected: false }])),
     engine: data.engineState ? GameEngine.fromState(data.engineState) : null,
     subscribers: new Set(),
@@ -181,6 +208,7 @@ function serializeRoom(room) {
     chat: room.chat,
     notices: room.notices,
     flash: room.flash,
+    liveAction: room.liveAction || null,
     turnActionCommitted: Boolean(room.turnActionCommitted),
     secondDieResolved: Boolean(room.secondDieResolved),
     secondDieBaseNodeId: room.secondDieBaseNodeId || null,
@@ -228,6 +256,7 @@ export class GameLobby {
       chat: [],
       notices: [],
       flash: null,
+      liveAction: null,
       turnActionCommitted: false,
       secondDieResolved: false,
       secondDieBaseNodeId: null,
@@ -355,15 +384,24 @@ export class GameLobby {
 
   handleAction(room, clientToken, body = {}) {
     const client = ensureClient(room, clientToken);
-    this.assertCanAct(room, client);
+    assertCanAct(room, client);
     const engine = room.engine;
     const type = String(body.type || '').trim();
     const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
     let result = { type };
-    const ensurePlayerTurn = () => { if (engine.state.phase !== PHASE.PLAYER_TURN) throw new Error('not a normal player turn'); };
-    const ensureUnlocked = () => { if (room.turnActionCommitted) throw new Error('this turn action is already complete'); };
-    const ensureFirstDie = () => { if (engine.state.lastDie1 === null) throw new Error('roll first die first'); };
-    const ensureNoPendingCard = () => { if (engine.state.pendingCard) throw new Error('resolve current card first'); };
+
+    const ensurePlayerTurn = () => {
+      if (engine.state.phase !== PHASE.PLAYER_TURN) throw new Error('current phase is not a player turn');
+    };
+    const ensureUnlocked = () => {
+      if (room.turnActionCommitted) throw new Error('this turn action is already complete');
+    };
+    const ensureFirstDie = () => {
+      if (engine.state.lastDie1 === null) throw new Error('roll the first die first');
+    };
+    const ensureNoPendingCard = () => {
+      if (engine.state.pendingCard) throw new Error('resolve the current card first');
+    };
     const selectCardOptions = source => {
       const selected = {};
       for (const key of ['selectedRoadToRemove', 'selectedBridgeToRoadEdge', 'selectedBridgeEdge']) {
@@ -371,30 +409,71 @@ export class GameLobby {
       }
       return selected;
     };
-    const savePendingCardOptions = options => { engine.state.pendingCardOptions = { ...(engine.state.pendingCardOptions || {}), ...selectCardOptions(options) }; };
+    const savePendingCardOptions = options => {
+      engine.state.pendingCardOptions = { ...(engine.state.pendingCardOptions || {}), ...selectCardOptions(options) };
+    };
+    const latestLogMessage = fallback => engine.state.log?.at(-1)?.message || fallback;
+    const stepLabel = mode => ({
+      CHOOSE_ACTION: 'choosing the action for this turn',
+      SELECT_BASE_ROAD: 'choosing the base for action 2',
+      SELECT_EDGE_ROAD: 'choosing the road for action 2',
+      SELECT_BASE_SECOND: 'choosing the base for action 3',
+      SELECT_EDGE_SECOND: 'choosing the second-die build target',
+      CARD_SELECT_BRIDGE_TO_ROAD: 'choosing the bridge-to-road card target',
+      CARD_SELECT_ROAD_TO_REMOVE: 'choosing the road to remove',
+      CARD_SELECT_BRIDGE_EDGE: 'choosing the bridge to build',
+    }[mode] || mode);
+    const setPendingCardLiveAction = (card, resolved, options = {}) => {
+      if (resolved.done) { clearLiveAction(room); return; }
+      const common = { card, ...resolved, ...options };
+      setLiveAction(room, client, resolved.needs, common);
+    };
 
     if (type === 'preBuildRoad') {
-      if (engine.state.phase !== PHASE.PRE_BUILD) throw new Error('pre-build action is only available during pre-build phase');
+      if (engine.state.phase !== PHASE.PRE_BUILD) throw new Error('only the pre-build phase accepts this action');
       engine.preBuildRoad(payload.edgeId);
       room.turnActionCommitted = false;
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
+      clearLiveAction(room);
+      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} completed the initial build`, latestLogMessage('initial road built'), { edgeId: payload.edgeId });
     } else if (type === 'startTurn') {
       ensurePlayerTurn(); ensureUnlocked();
-      if (engine.state.lastDie1 !== null) throw new Error('turn already started');
-      if (engine.state.pendingCard) throw new Error('resolve current card first');
+      if (engine.state.lastDie1 !== null) throw new Error('the first die has already been rolled');
+      if (engine.state.pendingCard) throw new Error('resolve the current card first');
       engine.startTurn();
       room.turnActionCommitted = false;
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
+      setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1 });
+      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} rolled the first die`, latestLogMessage(`first die: ${engine.state.lastDie1}`), { die1: engine.state.lastDie1 });
+    } else if (type === 'syncActionStep') {
+      ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
+      if (engine.state.lastDie2 !== null) throw new Error('the second-die action has already started');
+      const mode = String(payload.mode || '').trim();
+      const availableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
+      if (!['CHOOSE_ACTION', 'SELECT_BASE_ROAD', 'SELECT_EDGE_ROAD', 'SELECT_BASE_SECOND'].includes(mode)) throw new Error('invalid action step');
+      if (mode === 'SELECT_EDGE_ROAD') {
+        if (!availableBases.includes(payload.baseNodeId)) throw new Error('choose an available base');
+        const candidates = engine.getBuildableRoadEdgesFromBase(engine.currentPlayerId, payload.baseNodeId).map(edge => edge.id);
+        if (!candidates.length) throw new Error('that base has no buildable road');
+        setLiveAction(room, client, mode, { baseNodeId: payload.baseNodeId, candidateEdgeIds: candidates });
+      } else {
+        if (['SELECT_BASE_ROAD', 'SELECT_BASE_SECOND'].includes(mode) && !availableBases.length) throw new Error('there are no available bases');
+        setLiveAction(room, client, mode, { availableBaseIds: availableBases });
+      }
+      result = { type, mode, ...room.liveAction };
+      setRoomFlash(room, client, 'ACTION_STEP', `${client.playerName} is acting`, stepLabel(mode), { mode, ...room.liveAction });
     } else if (type === 'buildFromBase') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
-      if (engine.state.lastDie2 !== null) throw new Error('second die already started');
+      if (engine.state.lastDie2 !== null) throw new Error('the second-die action has already started');
       engine.buildFromBase(payload.baseNodeId, payload.edgeId);
       room.turnActionCommitted = true;
+      clearLiveAction(room);
+      setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} completed action 2`, latestLogMessage('road built'), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
     } else if (type === 'rollSecondDie' || type === 'rollSecondDieForBase') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
-      if (engine.state.lastDie2 !== null) throw new Error('second die already rolled');
+      if (engine.state.lastDie2 !== null) throw new Error('the second die has already been rolled');
       const baseNodeId = typeof payload.baseNodeId === 'string' ? payload.baseNodeId : '';
       const availableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
       if (!availableBases.includes(baseNodeId)) throw new Error('choose an available base');
@@ -402,25 +481,31 @@ export class GameLobby {
       room.secondDieBaseNodeId = baseNodeId;
       room.secondDieResolved = result.candidates.length === 0;
       if (!result.candidates.length) {
-        engine.log('NO_EFFECT', result.die2 === engine.state.lastDie1
-          ? 'Second die has no build target; pair still grants a card.'
-          : 'Second die has no build target.', { baseNodeId, die2: result.die2 });
+        engine.log('NO_EFFECT', result.die2 === engine.state.lastDie1 ? 'Second die has no build target; pair still grants a card.' : 'Second die has no build target.', { baseNodeId, die2: result.die2 });
         if (result.die2 !== engine.state.lastDie1) room.turnActionCommitted = true;
       }
+      if (result.candidates.length) setLiveAction(room, client, 'SELECT_EDGE_SECOND', { baseNodeId, candidateNodeIds: result.candidates });
+      else if (result.die2 === engine.state.lastDie1) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: result.die2, cardAvailable: true });
+      else clearLiveAction(room);
+      setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} rolled the second die`, latestLogMessage(`second die: ${result.die2}`), { baseNodeId, die2: result.die2, candidates: result.candidates });
     } else if (type === 'resolveSecondDieBuild') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
-      if (engine.state.lastDie2 === null) throw new Error('roll second die first');
-      if (room.secondDieResolved) throw new Error('second die action already resolved');
-      if (room.secondDieBaseNodeId && payload.baseNodeId !== room.secondDieBaseNodeId) throw new Error('second die must use the selected base');
-      result = { result: engine.resolveSecondDieBuild(payload.baseNodeId, payload.targetNodeId) };
+      if (engine.state.lastDie2 === null) throw new Error('roll the second die first');
+      if (room.secondDieResolved) throw new Error('the second-die action is already resolved');
+      if (room.secondDieBaseNodeId && payload.baseNodeId !== room.secondDieBaseNodeId) throw new Error('use the selected second-die base');
+      const buildResult = engine.resolveSecondDieBuild(payload.baseNodeId, payload.targetNodeId);
+      result = { result: buildResult };
       room.secondDieResolved = true;
       room.turnActionCommitted = engine.state.lastDie2 !== engine.state.lastDie1;
+      if (engine.state.lastDie2 === engine.state.lastDie1 && !room.turnActionCommitted) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: engine.state.lastDie2, cardAvailable: true });
+      else clearLiveAction(room);
+      setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} completed the second-die build`, latestLogMessage(`second-die result: ${buildResult}`), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
     } else if (type === 'drawCard') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie();
-      if (engine.state.pendingCard) throw new Error('resolve current card first');
+      if (engine.state.pendingCard) throw new Error('resolve the current card first');
       if (engine.state.lastDie2 !== null) {
-        if (!room.secondDieResolved) throw new Error('resolve second die first');
-        if (engine.state.lastDie2 !== engine.state.lastDie1) throw new Error('card is not available now');
+        if (!room.secondDieResolved) throw new Error('resolve the second-die action first');
+        if (engine.state.lastDie2 !== engine.state.lastDie1) throw new Error('there is no card opportunity now');
       }
       const card = engine.drawCard();
       const resolved = engine.resolveCard(card);
@@ -433,6 +518,8 @@ export class GameLobby {
         engine.state.pendingCard = card;
         engine.state.pendingCardOptions = {};
       }
+      setPendingCardLiveAction(card, resolved);
+      setRoomFlash(room, client, 'CARD_DRAWN', `${client.playerName} drew ${cardName(card)}`, resolved.done ? (resolved.announcement || `card resolved: ${cardName(card)}`) : `next step: ${stepLabel(resolved.needs)}`, { card, ...resolved });
     } else if (type === 'resolveCard') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie();
       const card = engine.state.pendingCard;
@@ -449,33 +536,39 @@ export class GameLobby {
         engine.state.pendingCard = card;
         savePendingCardOptions(options);
       }
+      setPendingCardLiveAction(card, resolved, options);
+      setRoomFlash(room, client, resolved.done ? 'CARD_RESOLVED' : 'ACTION_STEP', resolved.done ? `${client.playerName} resolved ${cardName(card)}` : `${client.playerName} is resolving ${cardName(card)}`, resolved.done ? (resolved.announcement || 'card resolved') : stepLabel(resolved.needs), { card, options, ...resolved });
     } else if (type === 'skipBuildRoad' || type === 'skipAction') {
       ensurePlayerTurn(); ensureUnlocked(); ensureFirstDie(); ensureNoPendingCard();
-      if (engine.state.lastDie2 !== null) throw new Error('cannot skip after second die started');
+      if (engine.state.lastDie2 !== null) throw new Error('the second-die action has already started');
       const candidates = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
       if (candidates.length) throw new Error('there are available bases; cannot skip');
       engine.log('NO_EFFECT', `First die ${engine.state.lastDie1} has no available base; action skipped.`);
       room.turnActionCommitted = true;
       result = { type, skipped: true, reason: 'NO_EFFECT' };
+      clearLiveAction(room);
+      setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} skipped the build`, latestLogMessage('no effect'));
     } else if (type === 'finishTurn') {
       ensurePlayerTurn(); ensureFirstDie();
-      if (engine.state.pendingCard) throw new Error('resolve current card first');
-      if (engine.state.lastDie2 !== null && !room.secondDieResolved) throw new Error('resolve second die first');
-      if (!room.turnActionCommitted) throw new Error('turn action is not complete');
+      if (engine.state.pendingCard) throw new Error('resolve the current card first');
+      if (engine.state.lastDie2 !== null && !room.secondDieResolved) throw new Error('resolve the second-die action first');
+      if (!room.turnActionCommitted) throw new Error('the turn action is not complete');
       engine.finishActionAndAdvance();
       room.turnActionCommitted = engine.state.phase !== PHASE.PLAYER_TURN;
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
+      clearLiveAction(room);
     } else {
       throw new Error('unknown action type');
     }
+
     if (engine.state.phase === PHASE.GAME_END) {
       room.status = 'game_over';
       room.turnActionCommitted = true;
       room.secondDieResolved = false;
       room.secondDieBaseNodeId = null;
+      clearLiveAction(room);
     }
-    room.flash = null;
     return result;
   }
 

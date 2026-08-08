@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { createAppServer, rooms } from '../server.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -106,18 +106,18 @@ async function readNextSseEvent(stream, timeoutMs = 2000) {
     }
 
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error('?? SSE ??????');
+    if (remaining <= 0) throw new Error('timed out waiting for SSE event');
     const readResult = await Promise.race([
       stream.reader.read(),
       wait(remaining).then(() => ({ timeout: true })),
     ]);
     if (readResult.timeout) {
       stream.controller.abort();
-      throw new Error('?? SSE ??????');
+      throw new Error('timed out waiting for SSE event');
     }
     if (readResult.done) {
       stream.closed = true;
-      throw new Error('SSE ?????');
+      throw new Error('SSE stream closed unexpectedly');
     }
     stream.buffer += stream.decoder.decode(readResult.value, { stream: true });
   }
@@ -127,12 +127,12 @@ async function waitForSseEnd(stream, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (!stream.closed) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error('?? SSE ??????');
+    if (remaining <= 0) throw new Error('timed out waiting for SSE end');
     const readResult = await Promise.race([
       stream.reader.read(),
       wait(remaining).then(() => ({ timeout: true })),
     ]);
-    if (readResult.timeout) throw new Error('?? SSE ??????');
+    if (readResult.timeout) throw new Error('timed out waiting for SSE end');
     if (readResult.done) {
       stream.closed = true;
       return;
@@ -316,6 +316,8 @@ async function run() {
     assertSuccess(turnStarted, 'the current player should be able to start a turn');
     assert.notEqual(turnStarted.data.room.game.lastDie1, null);
     assert.equal(turnStarted.data.room.turnActionCommitted, false);
+    assert.equal(turnStarted.data.room.liveAction.mode, 'CHOOSE_ACTION');
+    assert.equal(turnStarted.data.room.flash.type, 'DICE_ROLLED');
 
     const duplicateTurnStart = await request(`/api/rooms/${roomId}/actions`, {
       method: 'POST',
@@ -336,6 +338,34 @@ async function run() {
     const currentPlayerId = authoritativeEngine.currentPlayerId;
     const availableBasesBeforeValidation = authoritativeEngine.getBuildableBaseNodesForDie1(currentPlayerId);
     assert.ok(availableBasesBeforeValidation.length, 'the current player should have at least one valid second-die base');
+
+    const syncBaseRoad = await request(`/api/rooms/${roomId}/actions`, {
+      method: 'POST',
+      body: {
+        clientToken: hostToken,
+        type: 'syncActionStep',
+        payload: { mode: 'SELECT_BASE_ROAD' },
+      },
+    });
+    assertSuccess(syncBaseRoad, 'the action-2 base-selection step should be synchronized');
+    assert.equal(syncBaseRoad.data.room.liveAction.mode, 'SELECT_BASE_ROAD');
+    assert.equal(syncBaseRoad.data.room.flash.type, 'ACTION_STEP');
+
+    const observerSyncView = await request(`/api/rooms/${roomId}?clientToken=${encodeURIComponent(playerToken)}`);
+    assertSuccess(observerSyncView, 'other players should receive the synchronized action step');
+    assert.equal(observerSyncView.data.room.liveAction.mode, 'SELECT_BASE_ROAD');
+
+    const syncEdgeRoad = await request(`/api/rooms/${roomId}/actions`, {
+      method: 'POST',
+      body: {
+        clientToken: hostToken,
+        type: 'syncActionStep',
+        payload: { mode: 'SELECT_EDGE_ROAD', baseNodeId: availableBasesBeforeValidation[0] },
+      },
+    });
+    assertSuccess(syncEdgeRoad, 'the selected action-2 base should be synchronized');
+    assert.equal(syncEdgeRoad.data.room.liveAction.mode, 'SELECT_EDGE_ROAD');
+    assert.equal(syncEdgeRoad.data.room.liveAction.baseNodeId, availableBasesBeforeValidation[0]);
 
     // Force one same-number base to have no buildable outgoing edge. A
     // same-number but unavailable base must be rejected before any random roll.
@@ -384,7 +414,9 @@ async function run() {
       secondDieRoll.data.room.secondDieResolved,
       secondDieRoll.data.result.candidates.length === 0,
     );
+    assert.equal(secondDieRoll.data.room.flash.type, 'DICE_ROLLED');
     if (secondDieRoll.data.result.candidates.length) {
+      assert.equal(secondDieRoll.data.room.liveAction.mode, 'SELECT_EDGE_SECOND');
       const resolvedSecondDie = await request(`/api/rooms/${roomId}/actions`, {
         method: 'POST',
         body: {
@@ -399,6 +431,39 @@ async function run() {
       assertSuccess(resolvedSecondDie, 'the selected second-die target should resolve successfully');
       assert.equal(resolvedSecondDie.data.room.secondDieResolved, true);
     }
+
+    // Force a deterministic, immediately-resolving card after the second-die
+    // coverage above, then verify that another player receives the exact card
+    // result from the public room snapshot.
+    const cardTestRoom = rooms.get(roomId);
+    const cardTestEngine = cardTestRoom.engine;
+    cardTestEngine.state.currentPlayerIndex = 0;
+    cardTestEngine.state.lastDie1 = 1;
+    cardTestEngine.state.lastDie2 = null;
+    delete cardTestEngine.state.pendingCard;
+    delete cardTestEngine.state.pendingCardOptions;
+    cardTestEngine.random.weightedChoice = () => 'SUBSIDY';
+    cardTestRoom.turnActionCommitted = false;
+    cardTestRoom.secondDieResolved = false;
+    cardTestRoom.secondDieBaseNodeId = null;
+    cardTestRoom.liveAction = null;
+
+    const cardDraw = await request(`/api/rooms/${roomId}/actions`, {
+      method: 'POST',
+      body: { clientToken: hostToken, type: 'drawCard' },
+    });
+    assertSuccess(cardDraw, 'drawing a construction card should succeed');
+    assert.equal(cardDraw.data.result.card, 'SUBSIDY');
+    assert.equal(cardDraw.data.room.flash.type, 'CARD_DRAWN');
+    assert.equal(cardDraw.data.room.flash.payload.card, 'SUBSIDY');
+    assert.match(cardDraw.data.room.flash.title, /\u8d44\u91d1\u8865\u8d34\u5361/);
+    assert.equal(cardDraw.data.room.flash.message, cardDraw.data.result.announcement);
+
+    const observerCardView = await request(`/api/rooms/${roomId}?clientToken=${encodeURIComponent(playerToken)}`);
+    assertSuccess(observerCardView, 'other players should receive construction-card results');
+    assert.equal(observerCardView.data.room.flash.type, 'CARD_DRAWN');
+    assert.equal(observerCardView.data.room.flash.payload.card, 'SUBSIDY');
+    assert.equal(observerCardView.data.room.flash.message, cardDraw.data.result.announcement);
 
     const secondCreated = await request('/api/rooms', {
       method: 'POST',

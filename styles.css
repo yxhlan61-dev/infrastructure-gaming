@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #eef2f4;
   --card: #ffffff;
   --text: #1f2937;
@@ -670,6 +670,14 @@ body:not(.is-setup) .setup-card {
 .online-seat.occupied { color: #1e293b; background: #eff6ff; border-color: #bfdbfe; }
 .online-room-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0 4px; }
 .online-game-state { margin: 12px 0; padding: 9px 11px; border-radius: 9px; color: #1e3a8a; background: #eff6ff; }
+.online-sync-panel { margin: 10px 0; padding: 12px; border: 1px solid rgba(59, 130, 246, .35); border-radius: 12px; background: rgba(239, 246, 255, .78); }
+.online-sync-title { margin-bottom: 6px; color: #1d4ed8; font-weight: 800; }
+.online-sync-step { margin-bottom: 8px; color: #1e293b; font-size: 14px; line-height: 1.45; }
+.online-sync-flash { display: grid; gap: 4px; padding: 10px; border: 1px solid rgba(148, 163, 184, .35); border-radius: 10px; background: #fff; }
+.online-sync-flash span { color: #475569; font-size: 13px; line-height: 1.45; }
+.online-status-flash { margin-top: 10px; }
+.online-sync-log { display: grid; gap: 4px; margin-top: 8px; color: #475569; font-size: 12px; line-height: 1.4; }
+.online-readonly-action .small { margin-top: 8px; }
 .mini-button { margin: 0; padding: 4px 7px; font-size: 12px; border-radius: 7px; }
 .online-chat { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
 .online-chat h3 { margin: 0 0 8px; font-size: 15px; }

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { GameEngine, PHASE } from './src/game.js';
+import { GameEngine, PHASE, cardName } from './src/game.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = Number(process.env.PORT || 5173);
@@ -89,6 +89,30 @@ function roomChat(room, client, message) {
   room.chat = room.chat.slice(-80);
 }
 
+function setRoomFlash(room, client, type, title, message, payload = {}) {
+  room.flash = {
+    id: randomId('F'),
+    type,
+    title,
+    message,
+    playerIndex: client?.playerIndex ?? null,
+    playerName: client?.playerName || '',
+    createdAt: nowIso(),
+    payload,
+  };
+}
+function setLiveAction(room, client, mode, payload = {}) {
+  room.liveAction = {
+    id: randomId('A'),
+    mode,
+    playerIndex: client?.playerIndex ?? null,
+    playerName: client?.playerName || '',
+    createdAt: nowIso(),
+    ...payload,
+  };
+}
+function clearLiveAction(room) { room.liveAction = null; }
+
 function occupiedSeats(room) { return room.seats.filter(seat => seat.clientToken); }
 function allReady(room) {
   return occupiedSeats(room).length === room.playerCount
@@ -172,6 +196,7 @@ function publicRoom(room, clientToken = '') {
     chat: room.chat,
     notices: room.notices,
     flash: room.flash,
+    liveAction: room.liveAction || null,
   };
 }
 
@@ -217,6 +242,7 @@ function createRoom({ roomName, playerName, playerCount } = {}) {
     chat: [],
     notices: [],
     flash: null,
+    liveAction: null,
     turnActionCommitted: false,
     secondDieResolved: false,
     secondDieBaseNodeId: null,
@@ -394,16 +420,16 @@ function handleAction(room, clientToken, body = {}) {
   let result = { type };
 
   const ensurePlayerTurn = () => {
-    if (engine.state.phase !== PHASE.PLAYER_TURN) throw new Error('\u5f53\u524d\u4e0d\u662f\u6b63\u5f0f\u56de\u5408');
+    if (engine.state.phase !== PHASE.PLAYER_TURN) throw new Error('还没进入正式回合');
   };
   const ensureUnlocked = () => {
-    if (room.turnActionCommitted) throw new Error('\u672c\u56de\u5408\u52a8\u4f5c\u5df2\u7ecf\u5b8c\u6210');
+    if (room.turnActionCommitted) throw new Error('本回合行动已完成');
   };
   const ensureFirstDie = () => {
-    if (engine.state.lastDie1 === null) throw new Error('\u8bf7\u5148\u63b7\u7b2c\u4e00\u9ab0');
+    if (engine.state.lastDie1 === null) throw new Error('请先掷第一骰');
   };
   const ensureNoPendingCard = () => {
-    if (engine.state.pendingCard) throw new Error('\u8bf7\u5148\u5b8c\u6210\u5f53\u524d\u5efa\u8bbe\u5361');
+    if (engine.state.pendingCard) throw new Error('请先结算当前建设卡');
   };
   const selectCardOptions = source => {
     const selected = {};
@@ -418,75 +444,122 @@ function handleAction(room, clientToken, body = {}) {
       ...selectCardOptions(options),
     };
   };
+  const latestLogMessage = fallback => engine.state.log?.at(-1)?.message || fallback;
+  const stepLabel = mode => ({
+    CHOOSE_ACTION: '正在选择本回合行动',
+    SELECT_BASE_ROAD: '正在选择行动2的建设基地',
+    SELECT_EDGE_ROAD: '正在选择行动2要修的道路',
+    SELECT_BASE_SECOND: '正在选择行动3的建设基地',
+    SELECT_EDGE_SECOND: '正在选择第二骰建设目标',
+    SELECT_BRIDGE_TO_ROAD: '正在选择桥梁通路卡目标',
+    SELECT_ROAD_TO_REMOVE: '正在选择要拆除的道路',
+    SELECT_BRIDGE_EDGE: '正在选择要新建的桥',
+  }[mode] || mode);
+  const setPendingCardLiveAction = (card, resolved, options = {}) => {
+    if (resolved.done) {
+      clearLiveAction(room);
+      return;
+    }
+    const common = { card, ...resolved, ...options };
+    if (resolved.needs === 'SELECT_BRIDGE_TO_ROAD') setLiveAction(room, client, resolved.needs, common);
+    else if (resolved.needs === 'SELECT_ROAD_TO_REMOVE') setLiveAction(room, client, resolved.needs, common);
+    else if (resolved.needs === 'SELECT_BRIDGE_EDGE') setLiveAction(room, client, resolved.needs, common);
+  };
 
   if (type === 'preBuildRoad') {
-    if (engine.state.phase !== PHASE.PRE_BUILD) throw new Error('\u53ea\u6709\u5f00\u5c40\u9884\u5efa\u8bbe\u9636\u6bb5\u624d\u80fd\u6267\u884c\u8be5\u64cd\u4f5c');
+    if (engine.state.phase !== PHASE.PRE_BUILD) throw new Error('当前阶段不能进行预建设');
     engine.preBuildRoad(payload.edgeId);
     room.turnActionCommitted = false;
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
+    clearLiveAction(room);
+    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} 完成初始建设`, latestLogMessage('初始道路已建设'), { edgeId: payload.edgeId });
   } else if (type === 'startTurn') {
     ensurePlayerTurn();
     ensureUnlocked();
-    if (engine.state.lastDie1 !== null) throw new Error('\u672c\u56de\u5408\u5df2\u7ecf\u5f00\u59cb\uff0c\u4e0d\u80fd\u91cd\u590d\u63b7\u7b2c\u4e00\u9ab0');
-    if (engine.state.pendingCard) throw new Error('\u8bf7\u5148\u5b8c\u6210\u5f53\u524d\u5efa\u8bbe\u5361');
+    if (engine.state.lastDie1 !== null) throw new Error('本回合已经掷过第一骰');
+    if (engine.state.pendingCard) throw new Error('请先结算当前建设卡');
     engine.startTurn();
     room.turnActionCommitted = false;
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
+    setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1 });
+    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} 掷出第一骰`, latestLogMessage(`第一骰：${engine.state.lastDie1}`), { die1: engine.state.lastDie1 });
+  } else if (type === 'syncActionStep') {
+    ensurePlayerTurn();
+    ensureUnlocked();
+    ensureFirstDie();
+    ensureNoPendingCard();
+    if (engine.state.lastDie2 !== null) throw new Error('第二骰行动已经开始');
+    const mode = String(payload.mode || '').trim();
+    const availableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
+    if (!['CHOOSE_ACTION', 'SELECT_BASE_ROAD', 'SELECT_EDGE_ROAD', 'SELECT_BASE_SECOND'].includes(mode)) throw new Error('无效的行动步骤');
+    if (mode === 'SELECT_EDGE_ROAD') {
+      if (!availableBases.includes(payload.baseNodeId)) throw new Error('请选择可用基地');
+      const candidates = engine.getBuildableRoadEdgesFromBase(engine.currentPlayerId, payload.baseNodeId).map(edge => edge.id);
+      if (!candidates.length) throw new Error('该基地没有可修道路');
+      setLiveAction(room, client, mode, { baseNodeId: payload.baseNodeId, candidateEdgeIds: candidates });
+    } else {
+      if (['SELECT_BASE_ROAD', 'SELECT_BASE_SECOND'].includes(mode) && !availableBases.length) throw new Error('没有可用基地');
+      setLiveAction(room, client, mode, { availableBaseIds: availableBases });
+    }
+    result = { type, mode, ...room.liveAction };
+    setRoomFlash(room, client, 'ACTION_STEP', `${client.playerName} 正在操作`, stepLabel(mode), { mode, ...room.liveAction });
   } else if (type === 'buildFromBase') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
     ensureNoPendingCard();
-    if (engine.state.lastDie2 !== null) throw new Error('\u7b2c\u4e8c\u9ab0\u884c\u52a8\u5df2\u7ecf\u5f00\u59cb\uff0c\u4e0d\u80fd\u518d\u8fdb\u884c\u666e\u901a\u5efa\u8bbe');
+    if (engine.state.lastDie2 !== null) throw new Error('第二骰行动已经开始，不能再选择行动2');
     engine.buildFromBase(payload.baseNodeId, payload.edgeId);
     room.turnActionCommitted = true;
-  } else if (type === 'rollSecondDie') {
+    clearLiveAction(room);
+    setRoomFlash(room, client, 'ROAD_BUILT', `${client.playerName} 完成行动2建设`, latestLogMessage('道路已建设'), { baseNodeId: payload.baseNodeId, edgeId: payload.edgeId });
+  } else if (type === 'rollSecondDie' || type === 'rollSecondDieForBase') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
     ensureNoPendingCard();
-    if (engine.state.lastDie2 !== null) throw new Error('\u7b2c\u4e8c\u9ab0\u5df2\u7ecf\u63b7\u51fa\uff0c\u4e0d\u80fd\u91cd\u590d\u63b7\u9ab0');
+    if (engine.state.lastDie2 !== null) throw new Error('第二骰已经掷过');
     const baseNodeId = typeof payload.baseNodeId === 'string' ? payload.baseNodeId : '';
     const availableBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
-    if (!availableBases.includes(baseNodeId)) {
-      throw new Error('\u8bf7\u9009\u62e9\u5f53\u524d\u53ef\u5efa\u8bbe\u7684\u57fa\u5730');
-    }
+    if (!availableBases.includes(baseNodeId)) throw new Error('请选择可用基地');
     result = engine.rollSecondDieForBase(baseNodeId);
     room.secondDieBaseNodeId = baseNodeId;
     room.secondDieResolved = result.candidates.length === 0;
     if (!result.candidates.length) {
-      engine.log(
-        'NO_EFFECT',
-        result.die2 === engine.state.lastDie1
-          ? '\u7b2c\u4e8c\u9ab0\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u5efa\u8bbe\u76ee\u6807\uff0c\u672c\u6b21\u5efa\u8bbe\u65e0\u6548\u679c\uff1b\u56e0\u70b9\u6570\u76f8\u540c\uff0c\u4ecd\u53ef\u62bd\u5efa\u8bbe\u5361'
-          : '\u7b2c\u4e8c\u9ab0\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u5efa\u8bbe\u76ee\u6807\uff0c\u672c\u6b21\u5efa\u8bbe\u884c\u52a8\u65e0\u6548\u679c',
-        { baseNodeId: payload.baseNodeId, die2: result.die2 },
-      );
+      engine.log('NO_EFFECT', result.die2 === engine.state.lastDie1
+        ? '第二骰没有可建设目标，因点数相同仍可抽建设卡'
+        : '第二骰没有可建设目标，本回合行动无效果', { baseNodeId, die2: result.die2 });
       if (result.die2 !== engine.state.lastDie1) room.turnActionCommitted = true;
     }
+    if (result.candidates.length) setLiveAction(room, client, 'SELECT_EDGE_SECOND', { baseNodeId, candidateNodeIds: result.candidates });
+    else if (result.die2 === engine.state.lastDie1) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: result.die2, cardAvailable: true });
+    else clearLiveAction(room);
+    setRoomFlash(room, client, 'DICE_ROLLED', `${client.playerName} 掷出第二骰`, latestLogMessage(`第二骰：${result.die2}`), { baseNodeId, die2: result.die2, candidates: result.candidates });
   } else if (type === 'resolveSecondDieBuild') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
     ensureNoPendingCard();
-    if (engine.state.lastDie2 === null) throw new Error('\u8bf7\u5148\u63b7\u7b2c\u4e8c\u9ab0');
-    if (room.secondDieResolved) throw new Error('\u7b2c\u4e8c\u9ab0\u884c\u52a8\u5df2\u7ecf\u5b8c\u6210');
-    if (room.secondDieBaseNodeId && payload.baseNodeId !== room.secondDieBaseNodeId) {
-      throw new Error('\u7b2c\u4e8c\u9ab0\u5fc5\u987b\u4f7f\u7528\u521a\u624d\u9009\u62e9\u7684\u57fa\u5730');
-    }
-    result = { result: engine.resolveSecondDieBuild(payload.baseNodeId, payload.targetNodeId) };
+    if (engine.state.lastDie2 === null) throw new Error('请先掷第二骰');
+    if (room.secondDieResolved) throw new Error('第二骰行动已结算');
+    if (room.secondDieBaseNodeId && payload.baseNodeId !== room.secondDieBaseNodeId) throw new Error('请使用已选择的第二骰基地');
+    const buildResult = engine.resolveSecondDieBuild(payload.baseNodeId, payload.targetNodeId);
+    result = { result: buildResult };
     room.secondDieResolved = true;
     room.turnActionCommitted = engine.state.lastDie2 !== engine.state.lastDie1;
+    if (engine.state.lastDie2 === engine.state.lastDie1 && !room.turnActionCommitted) setLiveAction(room, client, 'CHOOSE_ACTION', { die1: engine.state.lastDie1, die2: engine.state.lastDie2, cardAvailable: true });
+    else clearLiveAction(room);
+    setRoomFlash(room, client, buildResult === 'BRIDGE' ? 'BRIDGE_BUILT' : buildResult === 'ROAD' ? 'ROAD_BUILT' : 'NO_EFFECT', `${client.playerName} 完成第二骰建设`, latestLogMessage(`第二骰建设结果：${buildResult}`), { baseNodeId: payload.baseNodeId, targetNodeId: payload.targetNodeId, result: buildResult });
   } else if (type === 'drawCard') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
-    if (engine.state.pendingCard) throw new Error('\u8bf7\u5148\u5b8c\u6210\u5f53\u524d\u5efa\u8bbe\u5361');
+    if (engine.state.pendingCard) throw new Error('请先结算当前建设卡');
     if (engine.state.lastDie2 !== null) {
-      if (!room.secondDieResolved) throw new Error('\u8bf7\u5148\u5b8c\u6210\u7b2c\u4e8c\u9ab0\u884c\u52a8');
-      if (engine.state.lastDie2 !== engine.state.lastDie1) throw new Error('\u7b2c\u4e8c\u9ab0\u884c\u52a8\u5df2\u7ecf\u5b8c\u6210\uff0c\u4e0d\u80fd\u62bd\u5efa\u8bbe\u5361');
+      if (!room.secondDieResolved) throw new Error('请先结算第二骰行动');
+      if (engine.state.lastDie2 !== engine.state.lastDie1) throw new Error('当前没有抽卡机会');
     }
     const card = engine.drawCard();
     const resolved = engine.resolveCard(card);
@@ -499,17 +572,16 @@ function handleAction(room, clientToken, body = {}) {
       engine.state.pendingCard = card;
       engine.state.pendingCardOptions = {};
     }
+    setPendingCardLiveAction(card, resolved);
+    setRoomFlash(room, client, 'CARD_DRAWN', `${client.playerName} 抽到建设卡：${cardName(card)}`, resolved.done ? (resolved.announcement || `建设卡已结算：${cardName(card)}`) : `等待选择目标：${stepLabel(resolved.needs)}`, { card, ...resolved });
   } else if (type === 'resolveCard') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
     const card = engine.state.pendingCard;
-    if (!card) throw new Error('\u6ca1\u6709\u5f85\u7ed3\u7b97\u7684\u5efa\u8bbe\u5361');
+    if (!card) throw new Error('没有待结算的建设卡');
     const incomingOptions = payload.options && typeof payload.options === 'object' ? payload.options : {};
-    const options = {
-      ...(engine.state.pendingCardOptions || {}),
-      ...selectCardOptions(incomingOptions),
-    };
+    const options = { ...(engine.state.pendingCardOptions || {}), ...selectCardOptions(incomingOptions) };
     const resolved = engine.resolveCard(card, options);
     result = { card, ...resolved };
     if (resolved.done) {
@@ -520,29 +592,34 @@ function handleAction(room, clientToken, body = {}) {
       engine.state.pendingCard = card;
       savePendingCardOptions(options);
     }
+    setPendingCardLiveAction(card, resolved, options);
+    setRoomFlash(room, client, resolved.done ? 'CARD_RESOLVED' : 'ACTION_STEP', resolved.done ? `${client.playerName} 结算建设卡：${cardName(card)}` : `${client.playerName} 正在结算建设卡：${cardName(card)}`, resolved.done ? (resolved.announcement || '建设卡已结算') : stepLabel(resolved.needs), { card, options, ...resolved });
   } else if (type === 'skipBuildRoad' || type === 'skipAction') {
     ensurePlayerTurn();
     ensureUnlocked();
     ensureFirstDie();
     ensureNoPendingCard();
-    if (engine.state.lastDie2 !== null) throw new Error('\u7b2c\u4e8c\u9ab0\u884c\u52a8\u5df2\u7ecf\u5f00\u59cb\uff0c\u4e0d\u80fd\u8df3\u8fc7\u666e\u901a\u5efa\u8bbe');
+    if (engine.state.lastDie2 !== null) throw new Error('第二骰行动已经开始，不能跳过行动2');
     const candidates = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
-    if (candidates.length) throw new Error('\u4ecd\u6709\u7b26\u5408\u6761\u4ef6\u7684\u57fa\u5730\uff0c\u4e0d\u80fd\u8df3\u8fc7\u5efa\u8bbe\u884c\u52a8');
-    engine.log('NO_EFFECT', `\u7b2c\u4e00\u9ab0\u4e3a ${engine.state.lastDie1}\uff0c\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u57fa\u5730\uff0c\u672c\u6b21\u5efa\u8bbe\u884c\u52a8\u65e0\u6548\u679c`);
+    if (candidates.length) throw new Error('仍有可用基地，不能跳过行动2');
+    engine.log('NO_EFFECT', `第一骰 ${engine.state.lastDie1} 没有任何可正常修路的基地，行动2跳过`);
     room.turnActionCommitted = true;
     result = { type, skipped: true, reason: 'NO_EFFECT' };
+    clearLiveAction(room);
+    setRoomFlash(room, client, 'NO_EFFECT', `${client.playerName} 跳过行动`, latestLogMessage('行动无效果'));
   } else if (type === 'finishTurn') {
     ensurePlayerTurn();
     ensureFirstDie();
-    if (engine.state.pendingCard) throw new Error('\u8bf7\u5148\u5b8c\u6210\u5f53\u524d\u5efa\u8bbe\u5361');
-    if (engine.state.lastDie2 !== null && !room.secondDieResolved) throw new Error('\u8bf7\u5148\u5b8c\u6210\u7b2c\u4e8c\u9ab0\u884c\u52a8');
-    if (!room.turnActionCommitted) throw new Error('\u5f53\u524d\u56de\u5408\u5c1a\u672a\u5b8c\u6210\u884c\u52a8');
+    if (engine.state.pendingCard) throw new Error('请先结算当前建设卡');
+    if (engine.state.lastDie2 !== null && !room.secondDieResolved) throw new Error('请先结算第二骰行动');
+    if (!room.turnActionCommitted) throw new Error('请先完成本回合行动');
     engine.finishActionAndAdvance();
     room.turnActionCommitted = engine.state.phase !== PHASE.PLAYER_TURN;
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
+    clearLiveAction(room);
   } else {
-    throw new Error('\u672a\u77e5\u52a8\u4f5c\u7c7b\u578b');
+    throw new Error('未知行动');
   }
 
   if (engine.state.phase === PHASE.GAME_END) {
@@ -550,12 +627,13 @@ function handleAction(room, clientToken, body = {}) {
     room.turnActionCommitted = true;
     room.secondDieResolved = false;
     room.secondDieBaseNodeId = null;
+    clearLiveAction(room);
   }
-  room.flash = null;
   touch(room);
   broadcast(room);
   return result;
 }
+
 function detachSubscriber(room, sub, { end = false, markDisconnected = true, broadcastOnChange = true } = {}) {
   if (sub.closed) return false;
   sub.closed = true;

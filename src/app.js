@@ -704,6 +704,7 @@ function renderBoard() {
   const { nodes, edges, players, currentMerchant, lastMerchantPath } = engine.state;
   const edgeSet = selectableEdges();
   const nodeSet = selectableNodes();
+  const activeBaseNodeId = uiMode.baseNodeId || online?.room?.secondDieBaseNodeId || null;
   const pathSet = new Set(lastMerchantPath || []);
 
   drawRegionBackground(nodes, edges);
@@ -754,7 +755,7 @@ function renderBoard() {
     const p = point(n);
     const classes = ['node', n.region === 'CITY' ? 'region-city' : 'region-country'];
     if (nodeSet.has(n.id)) classes.push('selectable');
-    if (uiMode.baseNodeId === n.id) classes.push('base-selected');
+    if (activeBaseNodeId === n.id) classes.push('base-selected');
     if (displayedMerchant?.startNodeId === n.id) classes.push('merchant-start');
     if (displayedMerchant?.endNodeId === n.id) classes.push('merchant-end');
 
@@ -888,11 +889,22 @@ function legacyRenderActions() {
         engine.log('NO_EFFECT', `第一骰为 ${engine.state.lastDie1}，没有任何可正常修路的基地，行动2跳过回合`);
         finishTurn();
       } else {
-        uiMode = { type: 'SELECT_BASE_ROAD' };
+        if (isOnline()) {
+          sendOnlineAction('syncActionStep', { mode: 'SELECT_BASE_ROAD' }).then(result => { if (result) { uiMode = { type: 'SELECT_BASE_ROAD' }; render(); } });
+        } else {
+          uiMode = { type: 'SELECT_BASE_ROAD' };
+          render();
+        }
+      }
+    });
+    document.getElementById('secondDieBtn').addEventListener('click', () => {
+      if (isOnline()) {
+        sendOnlineAction('syncActionStep', { mode: 'SELECT_BASE_SECOND' }).then(result => { if (result) { uiMode = { type: 'SELECT_BASE_SECOND' }; render(); } });
+      } else {
+        uiMode = { type: 'SELECT_BASE_SECOND' };
         render();
       }
     });
-    document.getElementById('secondDieBtn').addEventListener('click', () => { uiMode = { type: 'SELECT_BASE_SECOND' }; render(); });
     return;
   }
 
@@ -1321,15 +1333,48 @@ function restoreOnlinePendingCardMode() {
   uiMode = { type: 'IDLE' };
 }
 
+function uiModeFromLiveAction(liveAction) {
+  if (!liveAction?.mode) return null;
+  const mode = String(liveAction.mode);
+  if (mode === 'SELECT_BRIDGE_TO_ROAD') {
+    return { type: 'CARD_SELECT_BRIDGE_TO_ROAD', card: liveAction.card, candidates: liveAction.candidates || [] };
+  }
+  if (mode === 'SELECT_ROAD_TO_REMOVE') {
+    return { type: 'CARD_SELECT_ROAD_TO_REMOVE', card: liveAction.card, roadCandidates: liveAction.roadCandidates || [], bridgeCandidates: liveAction.bridgeCandidates || [] };
+  }
+  if (mode === 'SELECT_BRIDGE_EDGE') {
+    return {
+      type: 'CARD_SELECT_BRIDGE_EDGE',
+      card: liveAction.card,
+      roadCandidates: liveAction.roadCandidates || [],
+      bridgeCandidates: liveAction.bridgeCandidates || [],
+      selectedRoadToRemove: liveAction.selectedRoadToRemove,
+    };
+  }
+  if (mode === 'SELECT_EDGE_SECOND') {
+    return { type: 'SELECT_EDGE_SECOND', baseNodeId: liveAction.baseNodeId, candidateNodeIds: liveAction.candidateNodeIds || [] };
+  }
+  if (mode === 'SELECT_EDGE_ROAD') {
+    return { type: 'SELECT_EDGE_ROAD', baseNodeId: liveAction.baseNodeId, candidateEdgeIds: liveAction.candidateEdgeIds || [] };
+  }
+  if (['CHOOSE_ACTION', 'SELECT_BASE_ROAD', 'SELECT_BASE_SECOND'].includes(mode)) {
+    return { type: mode, availableBaseIds: liveAction.availableBaseIds || [] };
+  }
+  return null;
+}
+
 function deriveOnlineUiMode(room) {
   if (!engine || !room) return { type: 'SETUP' };
   if (engine.state.phase === PHASE.GAME_END) return { type: 'GAME_END' };
-  if (!isOnlineActionTurn()) return { type: 'IDLE' };
-  if (engine.state.phase === PHASE.PRE_BUILD) return { type: 'IDLE' };
   if (engine.state.pendingCard) {
+    const liveCardMode = uiModeFromLiveAction(room.liveAction);
+    if (liveCardMode?.type?.startsWith('CARD_')) return liveCardMode;
     restoreOnlinePendingCardMode();
     return uiMode;
   }
+  const liveMode = uiModeFromLiveAction(room.liveAction);
+  if (liveMode) return liveMode;
+  if (engine.state.phase === PHASE.PRE_BUILD) return { type: 'IDLE' };
   if (engine.state.lastDie1 === null) return { type: 'IDLE' };
   if (engine.state.lastDie2 === null) {
     return room.turnActionCommitted ? { type: 'IDLE' } : { type: 'CHOOSE_ACTION' };
@@ -1375,8 +1420,6 @@ function applyOnlineRoom(room, { renderNow = true } = {}) {
   }
   if (!engine) {
     uiMode = { type: 'SETUP' };
-  } else if (engine.state.pendingCard && isOnlineActionTurn()) {
-    restoreOnlinePendingCardMode();
   } else {
     uiMode = deriveOnlineUiMode(room);
   }
@@ -1625,7 +1668,6 @@ function onlineTurnFinishedAnnouncement(previousCompletedCount, previousMerchant
 
 function selectableEdges() {
   if (!engine) return new Set();
-  if (isOnline() && !isOnlineActionTurn()) return new Set();
   const s = engine.state;
   if (s.phase === PHASE.PRE_BUILD) return new Set(engine.getBuildableRoadEdges(engine.preBuildPlayerId).map(e => e.id));
   if (uiMode.type === 'SELECT_EDGE_ROAD') return new Set(engine.getBuildableRoadEdgesFromBase(engine.currentPlayerId, uiMode.baseNodeId).map(e => e.id));
@@ -1637,7 +1679,7 @@ function selectableEdges() {
 }
 
 function selectableNodes() {
-  if (!engine || (isOnline() && !isOnlineActionTurn())) return new Set();
+  if (!engine) return new Set();
   if (uiMode.type === 'CHOOSE_ACTION' || uiMode.type === 'SELECT_BASE_ROAD' || uiMode.type === 'SELECT_BASE_SECOND') {
     return new Set(engine.getBuildableBaseNodesForDie1(engine.currentPlayerId));
   }
@@ -1666,11 +1708,58 @@ function renderStatus() {
     `<div class="kv-row"><span>第二骰</span><b>${s.lastDie2 ?? '-'}</b></div>`,
   ];
   if (isOnline()) lines.push(`<div class="kv-row"><span>连接状态</span><b>${online.connected ? '已连接' : '重连中'}</b></div>`);
+  const latestOnlineFlash = online?.room?.flash;
+  if (isOnline() && latestOnlineFlash) {
+    lines.push(`<div class="online-sync-flash online-status-flash"><b>${htmlEscape(latestOnlineFlash.title || '\u6700\u65b0\u64cd\u4f5c')}</b><span>${htmlEscape(latestOnlineFlash.message || '')}</span></div>`);
+  }
   if (merchant) lines.push(`<div class="merchant-box"><span>${merchantName(merchant)}</span><b>${coordLabel(merchant.startNodeId)} → ${coordLabel(merchant.endNodeId)}</b></div>`);
   if (s.result) lines.push(`<p><b>获胜者：</b>${s.result.winners.map(id => htmlEscape(s.players[id].name)).join('、')}</p>`);
   statusPanel.innerHTML = lines.join('');
   boardHint.textContent = hintText();
   boardHint.classList.toggle('waiting-hint', uiMode.type === 'WAITING_MESSAGE' || uiMode.type === 'MERCHANT_ANIMATION');
+}
+
+function onlineActionStepText(room = online?.room) {
+  const action = room?.liveAction;
+  const playerName = action?.playerName || engine?.state.players[engine?.currentPlayerId]?.name || '\u5f53\u524d\u73a9\u5bb6';
+  const name = htmlEscape(playerName);
+  const mode = action?.mode ? String(action.mode) : '';
+  const map = {
+    CHOOSE_ACTION: `${name}\u6b63\u5728\u9009\u62e9\u672c\u56de\u5408\u884c\u52a8`,
+    SELECT_BASE_ROAD: `${name}\u6b63\u5728\u9009\u62e9\u884c\u52a82\u7684\u5efa\u8bbe\u57fa\u5730`,
+    SELECT_EDGE_ROAD: `${name}\u5df2\u9009\u57fa\u5730 ${htmlEscape(coordLabel(action.baseNodeId))}\uff0c\u6b63\u5728\u9009\u62e9\u8981\u4fee\u7684\u9053\u8def`,
+    SELECT_BASE_SECOND: `${name}\u6b63\u5728\u9009\u62e9\u884c\u52a83\u7684\u5efa\u8bbe\u57fa\u5730`,
+    SELECT_EDGE_SECOND: `${name}\u5df2\u9009\u57fa\u5730 ${htmlEscape(coordLabel(action.baseNodeId))}\uff0c\u6b63\u5728\u9009\u62e9\u7b2c\u4e8c\u9ab0\u76ee\u6807\uff08${(action.candidateNodeIds || []).length} \u4e2a\u5019\u9009\uff09`,
+    SELECT_BRIDGE_TO_ROAD: `${name}\u6b63\u5728\u7ed3\u7b97\u5efa\u8bbe\u5361\uff1a${htmlEscape(cardName(action.card))}\uff0c\u8bf7\u9009\u6865\u53d8\u9053\u8def`,
+    SELECT_ROAD_TO_REMOVE: `${name}\u6b63\u5728\u7ed3\u7b97\u5efa\u8bbe\u5361\uff1a${htmlEscape(cardName(action.card))}\uff0c\u8bf7\u9009\u62c6\u9664\u9053\u8def`,
+    SELECT_BRIDGE_EDGE: `${name}\u6b63\u5728\u7ed3\u7b97\u5efa\u8bbe\u5361\uff1a${htmlEscape(cardName(action.card))}\uff0c\u5df2\u9009\u8981\u62c6\u7684\u9053\u8def\uff0c\u6b63\u5728\u9009\u65b0\u6865`,
+  };
+  if (map[mode]) return map[mode];
+  if (engine?.state.phase === PHASE.PRE_BUILD) {
+    const current = engine.state.players[engine.preBuildPlayerId]?.name || '\u5f53\u524d\u73a9\u5bb6';
+    return `${htmlEscape(current)}\u6b63\u5728\u8fdb\u884c\u5f00\u5c40\u9884\u5efa\u8bbe`;
+  }
+  return room?.turnActionCommitted ? '\u672c\u56de\u5408\u5efa\u8bbe\u5df2\u5b8c\u6210\uff0c\u7b49\u5f85\u7ed3\u675f\u56de\u5408' : '\u6682\u65e0\u672a\u5b8c\u6210\u7684\u5171\u4eab\u64cd\u4f5c';
+}
+
+function onlineReadOnlyActionHtml() {
+  const room = online?.room;
+  const viewer = onlineViewer();
+  const currentId = engine.state.phase === PHASE.PRE_BUILD ? engine.preBuildPlayerId : engine.currentPlayerId;
+  const current = engine.state.players[currentId]?.name || '\u5176\u4ed6\u73a9\u5bb6';
+  const flash = room?.flash;
+  const logs = (engine.state.log || []).slice(-3).reverse();
+  const waiting = viewer?.spectator ? '\u4f60\u6b63\u5728\u89c2\u6218\u3002' : `\u8bf7\u7b49\u5f85 ${htmlEscape(current)} \u64cd\u4f5c\u3002`;
+  return `<div class="online-readonly-action">
+    <p class="waiting-message">${waiting}</p>
+    <div class="online-sync-panel">
+      <div class="online-sync-title">\u5b9e\u65f6\u540c\u6b65</div>
+      <div class="online-sync-step">${onlineActionStepText(room)}</div>
+      ${flash ? `<div class="online-sync-flash"><b>${htmlEscape(flash.title || '\u6700\u65b0\u64cd\u4f5c')}</b><span>${htmlEscape(flash.message || '')}</span></div>` : ''}
+      ${logs.length ? `<div class="online-sync-log">${logs.map(log => `<div>${htmlEscape(log.message || '')}</div>`).join('')}</div>` : ''}
+    </div>
+    <p class="small">\u5730\u56fe\u4e0a\u7684\u9ad8\u4eae\u8282\u70b9\u548c\u8fb9\u8868\u793a\u5f53\u524d\u73a9\u5bb6\u6b63\u5728\u9009\u62e9\u7684\u76ee\u6807\uff0c\u53ea\u6709\u8f6e\u5230\u7684\u73a9\u5bb6\u53ef\u64cd\u4f5c\u3002</p>
+  </div>`;
 }
 
 function renderActions() {
@@ -1688,10 +1777,7 @@ function renderActions() {
     return;
   }
   if (isOnline() && !isOnlineActionTurn()) {
-    const viewer = onlineViewer();
-    const currentId = s.phase === PHASE.PRE_BUILD ? engine.preBuildPlayerId : engine.currentPlayerId;
-    const current = s.players[currentId]?.name || '其他玩家';
-    actionPanel.innerHTML = `<p class="waiting-message">${viewer?.spectator ? '你正在观战。' : `请等待 ${htmlEscape(current)} 操作。`}</p>`;
+    actionPanel.innerHTML = onlineReadOnlyActionHtml();
     return;
   }
   if (uiMode.type === 'MERCHANT_ANIMATION') {
@@ -1751,11 +1837,22 @@ function renderActions() {
           finishTurn();
         }
       } else {
-        uiMode = { type: 'SELECT_BASE_ROAD' };
+        if (isOnline()) {
+          sendOnlineAction('syncActionStep', { mode: 'SELECT_BASE_ROAD' }).then(result => { if (result) { uiMode = { type: 'SELECT_BASE_ROAD' }; render(); } });
+        } else {
+          uiMode = { type: 'SELECT_BASE_ROAD' };
+          render();
+        }
+      }
+    });
+    document.getElementById('secondDieBtn').addEventListener('click', () => {
+      if (isOnline()) {
+        sendOnlineAction('syncActionStep', { mode: 'SELECT_BASE_SECOND' }).then(result => { if (result) { uiMode = { type: 'SELECT_BASE_SECOND' }; render(); } });
+      } else {
+        uiMode = { type: 'SELECT_BASE_SECOND' };
         render();
       }
     });
-    document.getElementById('secondDieBtn').addEventListener('click', () => { uiMode = { type: 'SELECT_BASE_SECOND' }; render(); });
     return;
   }
   actionPanel.innerHTML = `<p>${htmlEscape(hintText())}</p>`;
@@ -1804,8 +1901,13 @@ async function onNodeClick(nodeId) {
     const validBases = engine.getBuildableBaseNodesForDie1(engine.currentPlayerId);
     if (uiMode.type === 'SELECT_BASE_ROAD') {
       if (!validBases.includes(nodeId)) return;
-      uiMode = { type: 'SELECT_EDGE_ROAD', baseNodeId: nodeId };
-      render();
+      if (isOnline()) {
+        const result = await sendOnlineAction('syncActionStep', { mode: 'SELECT_EDGE_ROAD', baseNodeId: nodeId });
+        if (!result) return;
+      } else {
+        uiMode = { type: 'SELECT_EDGE_ROAD', baseNodeId: nodeId };
+        render();
+      }
       return;
     }
     if (uiMode.type === 'SELECT_BASE_SECOND') {
@@ -1888,9 +1990,13 @@ async function onEdgeClick(edgeIdValue) {
       return;
     }
     if (uiMode.type === 'CARD_SELECT_ROAD_TO_REMOVE') {
-      uiMode = { ...uiMode, type: 'CARD_SELECT_BRIDGE_EDGE', selectedRoadToRemove: edgeIdValue };
-      if (isOnline() && online.room?.game) online.room.game.pendingCardOptions = { selectedRoadToRemove: edgeIdValue };
-      render();
+      if (isOnline()) {
+        const result = await sendOnlineAction('resolveCard', { options: { selectedRoadToRemove: edgeIdValue } });
+        if (result?.done) { showAnnouncement(`\u5efa\u8bbe\u5361\uff1a${cardName(result.card)}`, result.announcement || '\u5efa\u8bbe\u5361\u5df2\u7ed3\u7b97\u3002'); await finishTurn(); }
+      } else {
+        uiMode = { ...uiMode, type: 'CARD_SELECT_BRIDGE_EDGE', selectedRoadToRemove: edgeIdValue };
+        render();
+      }
       return;
     }
     if (uiMode.type === 'CARD_SELECT_BRIDGE_EDGE') {
