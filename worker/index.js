@@ -384,7 +384,7 @@ export class GameLobby {
 
   handleAction(room, clientToken, body = {}) {
     const client = ensureClient(room, clientToken);
-    assertCanAct(room, client);
+    this.assertCanAct(room, client);
     const engine = room.engine;
     const type = String(body.type || '').trim();
     const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};

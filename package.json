@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/game.test.js && node tests/server.test.js",
+    "test": "node tests/game.test.js && node tests/server.test.js && node tests/worker.test.js",
     "serve": "node server.js",
     "cf:build": "node scripts/build-cloudflare.mjs",
     "deploy:cloudflare": "npm run cf:build && wrangler deploy"
