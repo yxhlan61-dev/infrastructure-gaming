@@ -1091,8 +1091,11 @@ function isInteractiveUiMode(type = uiMode.type) {
   ]).has(type);
 }
 function canInteract() {
+  // An EventSource reconnect only affects push updates. REST actions still work
+  // (and are validated by the authoritative server), so do not silently block
+  // the current player from building while the live stream reconnects.
   return Boolean(engine)
-    && (!isOnline() || (online.connected && isOnlineActionTurn()))
+    && (!isOnline() || isOnlineActionTurn())
     && !onlineRequestBusy;
 }
 function loadOnlineSession() {

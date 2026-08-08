@@ -106,9 +106,11 @@ button.danger { color: white; background: var(--danger); }
 .bridge-edge { stroke-width: 14; stroke-linecap: round; stroke-dasharray: 8 6; opacity: .85; }
 .road-edge { stroke-width: 7; stroke-linecap: round; }
 .path-edge { stroke: var(--path); stroke-width: 18; stroke-linecap: round; opacity: .5; }
-.edge-hit { stroke: transparent; stroke-width: 24; cursor: default; }
-.edge-hit.selectable { stroke: rgba(245,158,11,.25); cursor: pointer; }
-.edge-hit.selectable:hover { stroke: rgba(245,158,11,.55); }
+/* Keep a real SVG stroke hit area. `transparent` strokes are not reliably
+   clickable across browsers, especially while an EventSource is reconnecting. */
+.edge-hit { stroke: rgba(0,0,0,0); stroke-width: 30; cursor: default; pointer-events: stroke; }
+.edge-hit.selectable { stroke: rgba(245,158,11,.32); cursor: pointer; pointer-events: stroke; }
+.edge-hit.selectable:hover { stroke: rgba(245,158,11,.62); }
 
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; font-size: 13px; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
